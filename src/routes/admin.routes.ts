@@ -176,7 +176,7 @@ admin.post('/invite-links', async (c) => {
     [token, ownerId, recipientEmail || null, expiresAt, notes || null]
   );
 
-  const origin = process.env.CORS_ORIGIN || 'http://localhost:3001';
+  const origin = process.env.FRONTEND_URL || 'http://localhost:3001';
   const inviteUrl = `${origin}/register?invite=${token}`;
 
   return c.json({

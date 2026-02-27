@@ -4,14 +4,24 @@ import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { db } from '../config/database.js';
+import { getEnv } from '../config/env.js';
+import { loginRateLimit } from '../middleware/rate-limit.js';
 
 const auth = new Hono();
 
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback-dev-secret-change-me';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+function getJwtConfig() {
+  const env = getEnv();
+  return { secret: env.JWT_SECRET, expiresIn: env.JWT_EXPIRES_IN };
+}
 
 function signToken(payload: { brandId: string; ownerId: string; email: string }) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  const { secret, expiresIn } = getJwtConfig();
+  return jwt.sign(payload, secret, { expiresIn });
+}
+
+function verifyToken(token: string): { brandId: string; ownerId: string; email: string } {
+  const { secret } = getJwtConfig();
+  return jwt.verify(token, secret) as { brandId: string; ownerId: string; email: string };
 }
 
 // Login schema
@@ -30,8 +40,8 @@ const registerSchema = z.object({
   subdomain: z.string().min(3).max(63).regex(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/, 'Subdomain must be lowercase alphanumeric with hyphens')
 });
 
-// POST /api/auth/login
-auth.post('/login', zValidator('json', loginSchema), async (c) => {
+// POST /api/auth/login — with brute-force rate limiting
+auth.post('/login', loginRateLimit, zValidator('json', loginSchema), async (c) => {
   const { email, password } = c.req.valid('json');
 
   const ownerResult = await db.query(
@@ -234,7 +244,7 @@ auth.post('/verify', async (c) => {
 
   try {
     const token = authHeader.substring(7);
-    const decoded = jwt.verify(token, JWT_SECRET) as { brandId: string; ownerId: string; email: string };
+    const decoded = verifyToken(token);
 
     const result = await db.query(
       `SELECT bo.id, bo.email, bo.first_name, bo.last_name,
@@ -272,7 +282,7 @@ auth.get('/me', async (c) => {
 
   try {
     const token = authHeader.substring(7);
-    const decoded = jwt.verify(token, JWT_SECRET) as { brandId: string; ownerId: string };
+    const decoded = verifyToken(token);
 
     const result = await db.query(
       `SELECT bo.id, bo.email, bo.first_name, bo.last_name, bo.role,
@@ -297,6 +307,74 @@ auth.get('/me', async (c) => {
     });
   } catch {
     return c.json({ success: false, error: 'Invalid token' }, 401);
+  }
+});
+
+// POST /api/auth/change-password
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8, 'New password must be at least 8 characters')
+});
+
+auth.post('/change-password', zValidator('json', changePasswordSchema), async (c) => {
+  const authHeader = c.req.header('authorization');
+  if (!authHeader?.startsWith('Bearer ')) {
+    return c.json({ success: false, error: 'Not authenticated' }, 401);
+  }
+
+  try {
+    const token = authHeader.substring(7);
+    const decoded = verifyToken(token);
+    const { currentPassword, newPassword } = c.req.valid('json');
+
+    const result = await db.query(
+      'SELECT id, password_hash FROM brand_owners WHERE id = $1 AND brand_id = $2 AND is_active = true',
+      [decoded.ownerId, decoded.brandId]
+    );
+
+    if (result.rows.length === 0) {
+      return c.json({ success: false, error: 'User not found' }, 404);
+    }
+
+    const valid = await bcrypt.compare(currentPassword, result.rows[0].password_hash);
+    if (!valid) {
+      return c.json({ success: false, error: 'Current password is incorrect' }, 401);
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await db.query('UPDATE brand_owners SET password_hash = $1 WHERE id = $2', [newHash, decoded.ownerId]);
+
+    return c.json({ success: true, message: 'Password changed successfully' });
+  } catch {
+    return c.json({ success: false, error: 'Invalid token' }, 401);
+  }
+});
+
+// POST /api/auth/refresh — issue a new token from a valid existing one
+auth.post('/refresh', async (c) => {
+  const authHeader = c.req.header('authorization');
+  if (!authHeader?.startsWith('Bearer ')) {
+    return c.json({ success: false, error: 'No token provided' }, 401);
+  }
+
+  try {
+    const token = authHeader.substring(7);
+    const decoded = verifyToken(token);
+
+    // Verify user still exists and is active
+    const result = await db.query(
+      'SELECT bo.id, bo.email, bo.is_active, b.is_active AS brand_active FROM brand_owners bo JOIN brands b ON b.id = bo.brand_id WHERE bo.id = $1 AND bo.brand_id = $2',
+      [decoded.ownerId, decoded.brandId]
+    );
+
+    if (result.rows.length === 0 || !result.rows[0].is_active || !result.rows[0].brand_active) {
+      return c.json({ success: false, error: 'Account inactive or not found' }, 401);
+    }
+
+    const newToken = signToken({ brandId: decoded.brandId, ownerId: decoded.ownerId, email: decoded.email });
+    return c.json({ success: true, data: { token: newToken } });
+  } catch {
+    return c.json({ success: false, error: 'Invalid or expired token' }, 401);
   }
 });
 

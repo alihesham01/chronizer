@@ -1,14 +1,8 @@
 import { Hono } from 'hono';
-import { HTTPException } from 'hono/http-exception';
 import { analyticsService } from '../services/analytics-service.js';
+import { getBrandId } from '../lib/brand-context.js';
 
 const app = new Hono();
-
-function getBrandId(c: any): string {
-  const brandId = c.get('brandId');
-  if (!brandId) throw new HTTPException(401, { message: 'Brand context required' });
-  return brandId;
-}
 
 app.get('/dashboard', async (c) => {
   const data = await analyticsService.getDashboardMetrics(getBrandId(c));

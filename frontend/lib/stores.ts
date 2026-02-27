@@ -46,14 +46,21 @@ export interface BulkCreateResponse {
 }
 
 class StoresAPI {
+  private getToken(): string {
+    if (typeof window === 'undefined') return '';
+    return localStorage.getItem('auth_token') || '';
+  }
+
   private async request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${API_BASE_URL}${endpoint}`;
+    const token = this.getToken();
     const config: RequestInit = {
       headers: {
         'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...options.headers,
       },
       ...options,

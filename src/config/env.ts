@@ -4,6 +4,10 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.string().transform(Number).default('3000'),
   DATABASE_URL: z.string().url(),
+  JWT_SECRET: z.string().min(1).default('fallback-dev-secret-change-me'),
+  JWT_EXPIRES_IN: z.string().default('7d'),
+  FRONTEND_URL: z.string().default('http://localhost:3001'),
+  ALLOWED_ORIGINS: z.string().default('http://localhost:3001'),
   DB_POOL_SIZE: z.string().transform(Number).default('20'),
   QUERY_TIMEOUT: z.string().transform(Number).default('30000'),
   DEFAULT_PAGE_SIZE: z.string().transform(Number).default('100'),
@@ -19,6 +23,12 @@ export function loadEnv(): Env {
 
   try {
     env = envSchema.parse(process.env);
+
+    // CRITICAL: Crash if JWT_SECRET is not set in production
+    if (env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'fallback-dev-secret-change-me')) {
+      throw new Error('JWT_SECRET must be set to a secure value in production');
+    }
+
     return env;
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -27,7 +37,7 @@ export function loadEnv(): Env {
         console.error(`  - ${err.path.join('.')}: ${err.message}`);
       });
     }
-    throw new Error('Failed to load environment variables');
+    throw error instanceof Error ? error : new Error('Failed to load environment variables');
   }
 }
 

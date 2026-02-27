@@ -18,7 +18,6 @@ import { db } from './config/database.js';
 import { authRoutes } from './routes/auth.routes.js';
 import { brandRoutes } from './routes/brand.routes.js';
 import { transactionsRoutes } from './routes/transactions.routes.js';
-import { transactionsAsyncRoutes } from './routes/transactions-async.js';
 import { stockMovesRoutes } from './routes/stock-moves.routes.js';
 import { inventoryRoutes } from './routes/inventory.routes.js';
 import { analyticsRoutes } from './routes/analytics.routes.js';
@@ -99,7 +98,7 @@ app.use('/api/*', async (c, next) => {
 
   try {
     const token = authHeader.substring(7);
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-dev-secret-change-me') as any;
+    const decoded = jwt.verify(token, env.JWT_SECRET) as any;
 
     if (decoded.brandId) {
       c.set('brandId', decoded.brandId);
@@ -141,6 +140,7 @@ app.get('/', (c) => {
       health: '/api/health',
       auth: '/api/auth',
       transactions: '/api/transactions',
+      transactionsExport: '/api/transactions/export',
       products: '/api/products',
       stores: '/api/stores',
       inventory: '/api/inventory',
@@ -183,7 +183,6 @@ app.get('/api/test', (c) => {
 app.route('/api/auth', authRoutes);
 app.route('/api/brand', brandRoutes);
 app.route('/api/transactions', transactionsRoutes);
-app.route('/api/transactions-async', transactionsAsyncRoutes);
 app.route('/api/stock-moves', stockMovesRoutes);
 app.route('/api/inventory', inventoryRoutes);
 app.route('/api/analytics', analyticsRoutes);

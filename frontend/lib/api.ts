@@ -1,25 +1,36 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 
 export interface ApiResponse<T = any> {
+  success?: boolean;
   data?: T;
   error?: string;
   message?: string;
   pagination?: {
-    hasMore: boolean;
-    totalCount: number;
+    page: number;
     limit: number;
+    total: number;
+    totalPages: number;
+    hasMore: boolean;
   };
 }
 
 export interface Transaction {
-  id: number;
+  id: string;
+  brand_id: string;
   sku: string;
-  storeName: string;
-  quantity: number;
-  sellingPrice: number;
-  totalAmount: number;
-  type: 'sale' | 'refund' | 'adjustment';
-  date: string;
+  big_sku?: string;
+  item_name?: string;
+  colour?: string;
+  size?: string;
+  store_id?: string;
+  store_name?: string;
+  quantity_sold: number;
+  selling_price: number;
+  status: 'sale' | 'return' | 'void' | 'deleted';
+  transaction_date: string;
+  payment_method?: string;
+  notes?: string;
+  created_at: string;
 }
 
 export interface DashboardMetrics {
@@ -42,29 +53,14 @@ export interface DashboardMetrics {
 }
 
 export interface CacheStats {
-  metrics: {
-    l1: { hits: number; misses: number; hitRate: number };
-    l2: { hits: number; misses: number; hitRate: number };
-    overall: { hits: number; misses: number; hitRate: number };
-  };
-  l1: {
-    size: number;
-    itemCount: number;
-    evictions: number;
-  };
-}
-
-export interface QueueStats {
-  activeQueues: string[];
-  activeWorkers: string[];
-  queueStats: {
-    [queueName: string]: {
-      waiting: number;
-      active: number;
-      completed: number;
-      failed: number;
-    };
-  };
+  hits: number;
+  misses: number;
+  sets: number;
+  deletes: number;
+  evictions: number;
+  size: number;
+  hitRate: number;
+  memoryUsage: string;
 }
 
 export interface HealthStatus {
@@ -72,10 +68,8 @@ export interface HealthStatus {
   timestamp: string;
   version: string;
   services: {
-    database: { status: string };
-    redis: { status: string };
-    websocket: { status: string };
-    queue: { status: string };
+    database: string;
+    cache: string;
   };
 }
 
@@ -125,7 +119,8 @@ class ApiClient {
 
   // Health check
   async getHealth(): Promise<HealthStatus> {
-    return this.request<HealthStatus>('/api/health').then(res => res.data!);
+    const response = await this.request<HealthStatus>('/api/health');
+    return response as any as HealthStatus;
   }
 
   // Transactions
@@ -153,7 +148,7 @@ class ApiClient {
     };
   }
 
-  async getTransaction(id: number): Promise<Transaction | null> {
+  async getTransaction(id: string): Promise<Transaction | null> {
     try {
       const response = await this.request<Transaction>(`/api/transactions/${id}`);
       return response.data || null;
@@ -170,7 +165,7 @@ class ApiClient {
     return response.data!;
   }
 
-  async updateTransaction(id: number, updates: Partial<Transaction>): Promise<Transaction> {
+  async updateTransaction(id: string, updates: Partial<Transaction>): Promise<Transaction> {
     const response = await this.request<Transaction>(`/api/transactions/${id}`, {
       method: 'PUT',
       body: JSON.stringify(updates),
@@ -178,7 +173,7 @@ class ApiClient {
     return response.data!;
   }
 
-  async deleteTransaction(id: number): Promise<void> {
+  async deleteTransaction(id: string): Promise<void> {
     await this.request(`/api/transactions/${id}`, {
       method: 'DELETE',
     });
@@ -231,30 +226,11 @@ class ApiClient {
   // Cache
   async getCacheStats(): Promise<CacheStats> {
     const response = await this.request<CacheStats>('/api/cache/stats');
-    return response.data!;
-  }
-
-  async warmCache(): Promise<void> {
-    await this.request('/api/cache/warm', { method: 'POST' });
+    return response as any as CacheStats;
   }
 
   async clearCache(): Promise<void> {
     await this.request('/api/cache/clear', { method: 'POST' });
-  }
-
-  // Queue
-  async getQueueStats(): Promise<QueueStats> {
-    const response = await this.request<QueueStats>('/api/queue/stats');
-    return response.data!;
-  }
-
-  async getFailedJobs(queueName: string, limit: number = 50): Promise<any[]> {
-    const response = await this.request<any[]>(`/api/queue/${queueName}/failed?limit=${limit}`);
-    return response.data || [];
-  }
-
-  async retryJob(queueName: string, jobId: string): Promise<void> {
-    await this.request(`/api/queue/${queueName}/${jobId}/retry`, { method: 'POST' });
   }
 
   // Bulk operations
@@ -267,22 +243,40 @@ class ApiClient {
 
   async exportTransactions(params?: {
     format?: 'csv' | 'json';
-    dateRange?: { start: string; end: string };
-    store?: string;
+    start_date?: string;
+    end_date?: string;
+    store_id?: string;
   }): Promise<Blob> {
     const searchParams = new URLSearchParams();
+    const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
     if (params) {
       if (params.format) searchParams.append('format', params.format);
-      if (params.dateRange) {
-        searchParams.append('start', params.dateRange.start);
-        searchParams.append('end', params.dateRange.end);
-      }
-      if (params.store) searchParams.append('store', params.store);
+      if (params.start_date) searchParams.append('start_date', params.start_date);
+      if (params.end_date) searchParams.append('end_date', params.end_date);
+      if (params.store_id) searchParams.append('store_id', params.store_id);
     }
 
-    const response = await fetch(`${this.baseURL}/api/transactions/export?${searchParams}`);
+    const response = await fetch(`${this.baseURL}/api/transactions/export?${searchParams}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
     if (!response.ok) throw new Error('Export failed');
     return response.blob();
+  }
+
+  // Auth
+  async changePassword(currentPassword: string, newPassword: string): Promise<{ success: boolean; message?: string; error?: string }> {
+    const response = await this.request<any>('/api/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    return response as any;
+  }
+
+  async refreshToken(): Promise<{ token: string }> {
+    const response = await this.request<{ token: string }>('/api/auth/refresh', {
+      method: 'POST',
+    });
+    return response.data!;
   }
 }
 

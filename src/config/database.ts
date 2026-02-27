@@ -11,7 +11,6 @@ export function getDatabase(): Pool {
     const connStr = process.env.DATABASE_URL;
     
     if (connStr) {
-      console.log('Using DATABASE_URL:', connStr.replace(/:[^:]*@/, ':***@'));
       pool = new Pool({
         connectionString: connStr,
         max: parseInt(process.env.DB_POOL_SIZE || '20'),
@@ -20,11 +19,6 @@ export function getDatabase(): Pool {
         ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
       });
     } else {
-      console.log('Using individual DB params:');
-      console.log('DB_HOST:', process.env.DB_HOST);
-      console.log('DB_USER:', process.env.DB_USER);
-      console.log('DB_PASSWORD type:', typeof process.env.DB_PASSWORD);
-      console.log('DB_PASSWORD value:', process.env.DB_PASSWORD ? '***' : 'undefined');
       pool = new Pool({
         host: process.env.DB_HOST || 'localhost',
         port: parseInt(process.env.DB_PORT || '5432'),

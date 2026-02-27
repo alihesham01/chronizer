@@ -1,12 +1,8 @@
 import { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { db, withTransaction } from '../config/database.js';
-
-function getBrandId(c: Context): string {
-  const brandId = c.get('brandId');
-  if (!brandId) throw new HTTPException(401, { message: 'Brand context required' });
-  return brandId;
-}
+import { getBrandId } from '../lib/brand-context.js';
+import { auditLog } from '../lib/audit.js';
 
 export class StockMovesController {
   static async getStockMoves(c: Context) {
@@ -37,6 +33,7 @@ export class StockMovesController {
 
     const total = parseInt(countRes.rows[0].count);
     return c.json({
+      success: true,
       data: dataRes.rows,
       pagination: { page: pageNum, limit: limitNum, total, totalPages: Math.ceil(total / limitNum), hasMore: pageNum < Math.ceil(total / limitNum) }
     });
@@ -50,7 +47,7 @@ export class StockMovesController {
        WHERE sm.id = $1 AND sm.brand_id = $2`, [id, brandId]
     );
     if (result.rows.length === 0) throw new HTTPException(404, { message: 'Stock move not found' });
-    return c.json({ data: result.rows[0] });
+    return c.json({ success: true, data: result.rows[0] });
   }
 
   static async createStockMove(c: Context) {
@@ -70,7 +67,8 @@ export class StockMovesController {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
       [brandId, move_date, store_id, sku, quantity, destination, reference_type, reference_number, notes]
     );
-    return c.json({ data: result.rows[0] }, 201);
+    await auditLog(brandId, c.get('ownerId'), 'stock_move_created', { id: result.rows[0].id, sku });
+    return c.json({ success: true, data: result.rows[0] }, 201);
   }
 
   static async updateStockMove(c: Context) {
@@ -95,15 +93,21 @@ export class StockMovesController {
     const result = await db.query(
       `UPDATE stock_movements SET ${sets.join(', ')} WHERE id = $${pi} AND brand_id = $${pi+1} RETURNING *`, params
     );
-    return c.json({ data: result.rows[0] });
+    await auditLog(brandId, c.get('ownerId'), 'stock_move_updated', { id });
+    return c.json({ success: true, data: result.rows[0] });
   }
 
   static async deleteStockMove(c: Context) {
     const brandId = getBrandId(c);
     const { id } = c.req.param();
-    const result = await db.query('DELETE FROM stock_movements WHERE id = $1 AND brand_id = $2 RETURNING id', [id, brandId]);
+    // Soft delete: mark as cancelled instead of removing
+    const result = await db.query(
+      "UPDATE stock_movements SET notes = COALESCE(notes, '') || ' [CANCELLED]' WHERE id = $1 AND brand_id = $2 RETURNING id",
+      [id, brandId]
+    );
     if (result.rows.length === 0) throw new HTTPException(404, { message: 'Stock move not found' });
-    return c.json({ message: 'Deleted' });
+    await auditLog(brandId, c.get('ownerId'), 'stock_move_deleted', { id });
+    return c.json({ success: true, message: 'Stock move cancelled' });
   }
 
   static async bulkCreateStockMoves(c: Context) {
@@ -153,6 +157,6 @@ export class StockMovesController {
        FROM stock_movements ${where}
        GROUP BY sku ORDER BY sku`, params
     );
-    return c.json({ data: result.rows });
+    return c.json({ success: true, data: result.rows });
   }
 }

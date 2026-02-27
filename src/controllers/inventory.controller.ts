@@ -1,12 +1,7 @@
 import { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../config/database.js';
-
-function getBrandId(c: Context): string {
-  const brandId = c.get('brandId');
-  if (!brandId) throw new HTTPException(401, { message: 'Brand context required' });
-  return brandId;
-}
+import { getBrandId } from '../lib/brand-context.js';
 
 export class InventoryController {
   static async getInventory(c: Context) {

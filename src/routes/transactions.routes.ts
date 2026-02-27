@@ -21,4 +21,7 @@ transactions.delete('/:id', TransactionsController.deleteTransaction);
 // POST /api/transactions/bulk - Bulk create transactions
 transactions.post('/bulk', TransactionsController.bulkCreateTransactions);
 
+// GET /api/transactions/export - Export transactions as CSV or JSON
+transactions.get('/export', TransactionsController.exportTransactions);
+
 export { transactions as transactionsRoutes };

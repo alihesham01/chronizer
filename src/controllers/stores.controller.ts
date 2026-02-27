@@ -1,12 +1,8 @@
 import { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { db, withTransaction } from '../config/database.js';
-
-function getBrandId(c: Context): string {
-  const brandId = c.get('brandId');
-  if (!brandId) throw new HTTPException(401, { message: 'Brand context required' });
-  return brandId;
-}
+import { getBrandId } from '../lib/brand-context.js';
+import { auditLog } from '../lib/audit.js';
 
 export class StoresController {
   static async getStores(c: Context) {
@@ -32,6 +28,7 @@ export class StoresController {
 
     const total = parseInt(countRes.rows[0].count);
     return c.json({
+      success: true,
       data: dataRes.rows,
       pagination: { page: pageNum, limit: limitNum, total, totalPages: Math.ceil(total / limitNum), hasMore: pageNum < Math.ceil(total / limitNum) }
     });
@@ -42,7 +39,7 @@ export class StoresController {
     const { id } = c.req.param();
     const result = await db.query('SELECT * FROM stores WHERE id = $1 AND brand_id = $2', [id, brandId]);
     if (result.rows.length === 0) throw new HTTPException(404, { message: 'Store not found' });
-    return c.json({ data: result.rows[0] });
+    return c.json({ success: true, data: result.rows[0] });
   }
 
   static async createStore(c: Context) {
@@ -62,7 +59,8 @@ export class StoresController {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
       [brandId, name, display_name || name, code, group_name, commission, rent, activation_date || new Date().toISOString()]
     );
-    return c.json({ data: result.rows[0] }, 201);
+    await auditLog(brandId, c.get('ownerId'), 'store_created', { id: result.rows[0].id, name });
+    return c.json({ success: true, data: result.rows[0] }, 201);
   }
 
   static async updateStore(c: Context) {
@@ -87,15 +85,21 @@ export class StoresController {
     const result = await db.query(
       `UPDATE stores SET ${sets.join(', ')} WHERE id = $${pi} AND brand_id = $${pi+1} RETURNING *`, params
     );
-    return c.json({ data: result.rows[0] });
+    await auditLog(brandId, c.get('ownerId'), 'store_updated', { id });
+    return c.json({ success: true, data: result.rows[0] });
   }
 
   static async deleteStore(c: Context) {
     const brandId = getBrandId(c);
     const { id } = c.req.param();
-    const result = await db.query('DELETE FROM stores WHERE id = $1 AND brand_id = $2 RETURNING id', [id, brandId]);
+    // Soft delete: deactivate instead of removing
+    const result = await db.query(
+      'UPDATE stores SET is_active = false, deactivation_date = NOW() WHERE id = $1 AND brand_id = $2 AND is_active = true RETURNING id',
+      [id, brandId]
+    );
     if (result.rows.length === 0) throw new HTTPException(404, { message: 'Store not found' });
-    return c.json({ message: 'Store deleted' });
+    await auditLog(brandId, c.get('ownerId'), 'store_deleted', { id });
+    return c.json({ success: true, message: 'Store deactivated' });
   }
 
   static async bulkCreateStores(c: Context) {

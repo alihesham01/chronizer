@@ -1,7 +1,12 @@
 const { Pool } = require('pg');
 
+if (!process.env.DATABASE_URL) {
+  console.error('❌ DATABASE_URL environment variable is required');
+  process.exit(1);
+}
+
 const pool = new Pool({
-  connectionString: 'postgresql://chronizer_user:55np6F4VPEOYz8IIt9o4663s4rn6ktYk@dpg-d6gfo71drdic73c5morg-a.ohio-postgres.render.com/chronizer',
+  connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 

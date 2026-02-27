@@ -6,13 +6,16 @@ interface CacheItem {
   hits: number;
 }
 
+const MAX_CACHE_SIZE = 1000;
+
 class MemoryCache {
   private cache: Map<string, CacheItem> = new Map();
   private stats = {
     hits: 0,
     misses: 0,
     sets: 0,
-    deletes: 0
+    deletes: 0,
+    evictions: 0
   };
 
   async get(key: string): Promise<any | null> {
@@ -35,6 +38,11 @@ class MemoryCache {
   }
 
   async set(key: string, value: any, ttlSeconds: number = 300): Promise<void> {
+    // LRU eviction: if at capacity, remove the least-recently-hit entry
+    if (this.cache.size >= MAX_CACHE_SIZE && !this.cache.has(key)) {
+      this.evictLRU();
+    }
+
     const expiry = Date.now() + (ttlSeconds * 1000);
     
     this.cache.set(key, {
@@ -44,10 +52,28 @@ class MemoryCache {
     });
     
     this.stats.sets++;
-    
-    // Log large items
-    if (value && typeof value === 'object' && JSON.stringify(value).length > 10000) {
-      logger.warn(`Large cache item set for key: ${key}`);
+  }
+
+  private evictLRU(): void {
+    let lruKey: string | null = null;
+    let lruHits = Infinity;
+
+    for (const [key, item] of this.cache.entries()) {
+      // Prefer expired items first
+      if (Date.now() > item.expiry) {
+        this.cache.delete(key);
+        this.stats.evictions++;
+        return;
+      }
+      if (item.hits < lruHits) {
+        lruHits = item.hits;
+        lruKey = key;
+      }
+    }
+
+    if (lruKey) {
+      this.cache.delete(lruKey);
+      this.stats.evictions++;
     }
   }
 

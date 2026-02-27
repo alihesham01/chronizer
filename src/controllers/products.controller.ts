@@ -1,12 +1,8 @@
 import { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { db, withTransaction } from '../config/database.js';
-
-function getBrandId(c: Context): string {
-  const brandId = c.get('brandId');
-  if (!brandId) throw new HTTPException(401, { message: 'Brand context required' });
-  return brandId;
-}
+import { getBrandId } from '../lib/brand-context.js';
+import { auditLog } from '../lib/audit.js';
 
 export class ProductsController {
   static async getProducts(c: Context) {
@@ -59,6 +55,7 @@ export class ProductsController {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
       [brandId, sku, big_sku, name, colour, size, category, cost_price, selling_price]
     );
+    await auditLog(brandId, c.get('ownerId'), 'product_created', { id: result.rows[0].id, sku });
     return c.json({ success: true, data: result.rows[0] }, 201);
   }
 
@@ -84,15 +81,21 @@ export class ProductsController {
     const result = await db.query(
       `UPDATE products SET ${sets.join(', ')} WHERE id = $${pi} AND brand_id = $${pi+1} RETURNING *`, params
     );
+    await auditLog(brandId, c.get('ownerId'), 'product_updated', { id });
     return c.json({ success: true, data: result.rows[0] });
   }
 
   static async deleteProduct(c: Context) {
     const brandId = getBrandId(c);
     const { id } = c.req.param();
-    const result = await db.query('DELETE FROM products WHERE id = $1 AND brand_id = $2 RETURNING id', [id, brandId]);
+    // Soft delete: deactivate instead of removing
+    const result = await db.query(
+      'UPDATE products SET is_active = false WHERE id = $1 AND brand_id = $2 AND is_active = true RETURNING id',
+      [id, brandId]
+    );
     if (result.rows.length === 0) throw new HTTPException(404, { message: 'Product not found' });
-    return c.json({ success: true, message: 'Product deleted' });
+    await auditLog(brandId, c.get('ownerId'), 'product_deleted', { id });
+    return c.json({ success: true, message: 'Product deactivated' });
   }
 
   static async bulkCreateProducts(c: Context) {

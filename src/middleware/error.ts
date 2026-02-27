@@ -25,13 +25,11 @@ export const errorHandler: ErrorHandler = (err, c) => {
     details = process.env.NODE_ENV === 'development' ? err.message : undefined;
   }
 
-  // Return error response
+  // Standardized error response format
   return c.json({
-    error: {
-      message,
-      status: statusCode,
-      ...(details && { details }),
-      ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
-    }
-  }, statusCode);
+    success: false,
+    error: message,
+    ...(details && { details }),
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+  }, statusCode as any);
 };

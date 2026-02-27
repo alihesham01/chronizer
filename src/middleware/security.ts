@@ -21,8 +21,3 @@ export const securityHeaders = (): MiddlewareHandler => {
   };
 };
 
-export const sanitizeInput = (input: string): string => {
-  return input
-    .replace(/[<>]/g, '') // Remove potential HTML tags
-    .trim();
-};

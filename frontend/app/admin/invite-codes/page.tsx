@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -59,7 +61,7 @@ export default function InviteLinksPage() {
   const fetchLinks = useCallback(async () => {
     if (!token) return;
     try {
-      const response = await fetch('/api/admin/invite-links', {
+      const response = await fetch(`${API_BASE}/api/admin/invite-links`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await response.json();
@@ -88,7 +90,7 @@ export default function InviteLinksPage() {
     setGeneratedUrl('');
 
     try {
-      const response = await fetch('/api/admin/invite-links', {
+      const response = await fetch(`${API_BASE}/api/admin/invite-links`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({

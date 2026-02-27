@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -63,7 +65,7 @@ export default function SystemStatusPage() {
       return;
     }
 
-    fetch('/api/admin/system', {
+    fetch(`${API_BASE}/api/admin/system`, {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(r => r.json())

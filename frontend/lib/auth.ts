@@ -1,4 +1,4 @@
-const AUTH_BASE_URL = '';
+const AUTH_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 
 export interface LoginResponse {
   success: boolean;

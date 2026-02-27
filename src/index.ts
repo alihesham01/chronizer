@@ -26,6 +26,7 @@ import { systemRoutes } from './routes/system.routes.js';
 import { productsRoutes } from './routes/products.routes.js';
 import { storesRoutes } from './routes/stores.routes.js';
 import { adminRoutes } from './routes/admin.routes.js';
+import { skuMapRoutes } from './routes/sku-map.routes.js';
 
 // Middleware
 import { errorHandler } from './middleware/error.js';
@@ -145,7 +146,8 @@ app.get('/', (c) => {
       inventory: '/api/inventory',
       analytics: '/api/analytics',
       stockMoves: '/api/stock-moves',
-      admin: '/api/admin'
+      admin: '/api/admin',
+      skuMap: '/api/sku-map'
     }
   });
 });
@@ -189,6 +191,7 @@ app.route('/api/system', systemRoutes);
 app.route('/api/products', productsRoutes);
 app.route('/api/stores', storesRoutes);
 app.route('/api/admin', adminRoutes);
+app.route('/api/sku-map', skuMapRoutes);
 
 // ── Cache stats (in-memory) ──
 app.get('/api/cache/stats', (c) => {

@@ -23,7 +23,8 @@ import {
   Moon,
   Sun,
   Zap,
-  Activity
+  Activity,
+  GitCompareArrows
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -37,6 +38,7 @@ const navigation = [
   { name: 'Transactions', href: '/transactions', icon: CreditCard },
   { name: 'Inventory', href: '/inventory', icon: Archive, badge: 'New' },
   { name: 'Stock Moves', href: '/stock-moves', icon: Truck, badge: 'New' },
+  { name: 'SKU Map', href: '/sku-map', icon: GitCompareArrows, badge: 'New' },
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];

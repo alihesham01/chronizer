@@ -32,71 +32,80 @@ admin.use('/*', requireAdmin);
 // SYSTEM STATS — cross-account totals + activity
 // ═══════════════════════════════════════════════════════════════
 admin.get('/stats', async (c) => {
-  const [brands, owners, transactions, products, stores, stockMoves] = await Promise.all([
-    db.query("SELECT COUNT(*) as count FROM brands WHERE is_active = true AND subdomain != 'admin'"),
-    db.query("SELECT COUNT(*) as count FROM brand_owners WHERE is_active = true AND is_admin = false"),
-    db.query('SELECT COUNT(*) as count FROM transactions'),
-    db.query('SELECT COUNT(*) as count FROM products WHERE is_active = true'),
-    db.query('SELECT COUNT(*) as count FROM stores WHERE is_active = true'),
-    db.query('SELECT COUNT(*) as count FROM stock_movements'),
-  ]);
+  try {
+    const [brands, owners, transactions, products, stores, stockMoves] = await Promise.all([
+      db.query("SELECT COUNT(*) as count FROM brands WHERE is_active = true AND subdomain != 'admin'"),
+      db.query("SELECT COUNT(*) as count FROM brand_owners WHERE is_active = true AND is_admin = false"),
+      db.query('SELECT COUNT(*) as count FROM transactions'),
+      db.query('SELECT COUNT(*) as count FROM products WHERE is_active = true'),
+      db.query('SELECT COUNT(*) as count FROM stores WHERE is_active = true'),
+      db.query('SELECT COUNT(*) as count FROM stock_movements'),
+    ]);
 
-  const recentTxns = await db.query(`
-    SELECT DATE(transaction_date) as date, COUNT(*) as count, COALESCE(SUM(total_amount),0) as total
-    FROM transactions
-    WHERE transaction_date >= NOW() - INTERVAL '30 days'
-    GROUP BY DATE(transaction_date)
-    ORDER BY date DESC
-  `);
+    const recentTxns = await db.query(`
+      SELECT DATE(transaction_date) as date, COUNT(*) as count, COALESCE(SUM(total_amount),0) as total
+      FROM transactions
+      WHERE transaction_date >= NOW() - INTERVAL '30 days'
+      GROUP BY DATE(transaction_date)
+      ORDER BY date DESC
+    `);
 
-  const topBrands = await db.query(`
-    SELECT b.name, b.subdomain, COUNT(t.id) as transaction_count,
-           COALESCE(SUM(t.total_amount), 0) as total_revenue
-    FROM brands b
-    LEFT JOIN transactions t ON t.brand_id = b.id
-    WHERE b.is_active = true AND b.subdomain != 'admin'
-    GROUP BY b.id, b.name, b.subdomain
-    ORDER BY transaction_count DESC
-    LIMIT 10
-  `);
+    const topBrands = await db.query(`
+      SELECT b.name, b.subdomain, COUNT(t.id) as transaction_count,
+             COALESCE(SUM(t.total_amount), 0) as total_revenue
+      FROM brands b
+      LEFT JOIN transactions t ON t.brand_id = b.id
+      WHERE b.is_active = true AND b.subdomain != 'admin'
+      GROUP BY b.id, b.name, b.subdomain
+      ORDER BY transaction_count DESC
+      LIMIT 10
+    `);
 
-  const activeAccounts = await db.query(`
-    SELECT bo.email, bo.first_name, bo.last_name, bo.last_login, bo.last_active,
-           b.name as brand_name, b.subdomain
-    FROM brand_owners bo
-    JOIN brands b ON b.id = bo.brand_id
-    WHERE bo.is_active = true AND bo.is_admin = false
-    ORDER BY bo.last_login DESC NULLS LAST
-    LIMIT 20
-  `);
+    const activeAccounts = await db.query(`
+      SELECT bo.email, bo.first_name, bo.last_name, bo.created_at,
+             b.name as brand_name, b.subdomain
+      FROM brand_owners bo
+      JOIN brands b ON b.id = bo.brand_id
+      WHERE bo.is_active = true AND bo.is_admin = false
+      ORDER BY bo.created_at DESC
+      LIMIT 20
+    `);
 
-  const recentActivity = await db.query(`
-    SELECT al.action, al.details, al.created_at,
-           bo.email, bo.first_name, b.name as brand_name
-    FROM activity_log al
-    LEFT JOIN brand_owners bo ON bo.id = al.owner_id
-    LEFT JOIN brands b ON b.id = al.brand_id
-    ORDER BY al.created_at DESC
-    LIMIT 30
-  `);
+    // activity_log may not exist yet
+    let recentActivity = { rows: [] as any[] };
+    try {
+      recentActivity = await db.query(`
+        SELECT al.action, al.details, al.created_at,
+               bo.email, bo.first_name, b.name as brand_name
+        FROM activity_log al
+        LEFT JOIN brand_owners bo ON bo.id = al.owner_id
+        LEFT JOIN brands b ON b.id = al.brand_id
+        ORDER BY al.created_at DESC
+        LIMIT 30
+      `);
+    } catch { /* table may not exist */ }
 
-  return c.json({
-    success: true,
-    data: {
-      totals: {
-        brands: parseInt(brands.rows[0].count),
-        owners: parseInt(owners.rows[0].count),
-        transactions: parseInt(transactions.rows[0].count),
-        products: parseInt(products.rows[0].count),
-        stores: parseInt(stores.rows[0].count),
-        stockMovements: parseInt(stockMoves.rows[0].count),
-      },
-      recentTransactions: recentTxns.rows,
-      topBrands: topBrands.rows,
-      activeAccounts: activeAccounts.rows,
-      recentActivity: recentActivity.rows,
-    }
-  });
+    return c.json({
+      success: true,
+      data: {
+        totals: {
+          brands: parseInt(brands.rows[0].count),
+          owners: parseInt(owners.rows[0].count),
+          transactions: parseInt(transactions.rows[0].count),
+          products: parseInt(products.rows[0].count),
+          stores: parseInt(stores.rows[0].count),
+          stockMovements: parseInt(stockMoves.rows[0].count),
+        },
+        recentTransactions: recentTxns.rows,
+        topBrands: topBrands.rows,
+        activeAccounts: activeAccounts.rows,
+        recentActivity: recentActivity.rows,
+      }
+    });
+  } catch (error: any) {
+    console.error('Admin stats error:', error.message);
+    return c.json({ success: false, error: error.message }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════

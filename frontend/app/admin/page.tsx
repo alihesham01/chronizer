@@ -38,11 +38,12 @@ export default function AdminDashboard() {
     fetch(`${API_BASE}/api/admin/stats`, {
       headers: { Authorization: `Bearer ${token}` }
     })
-      .then(r => {
+      .then(async r => {
         if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
           if (r.status === 401) throw new Error('Authentication expired. Please login again.');
           if (r.status === 403) throw new Error('You do not have admin access.');
-          throw new Error(`Server error: ${r.status}`);
+          throw new Error(body.error || `Server error: ${r.status}`);
         }
         return r.json();
       })

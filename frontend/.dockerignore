@@ -1,0 +1,15 @@
+# Exclude backend code
+../package.json
+../package-lock.json
+src/
+scripts/
+Dockerfile.backend
+*.sql
+*.cjs
+redis/
+google-cloud-sdk/
+gcloud-*
+setup-*
+admin-*
+*.md
+!.md

@@ -26,7 +26,6 @@ import { productsRoutes } from './routes/products.routes.js';
 import { storesRoutes } from './routes/stores.routes.js';
 import { adminRoutes } from './routes/admin.routes.js';
 import { skuMapRoutes } from './routes/sku-map.routes.js';
-import { migrationRoutes } from './routes/migration.routes.js';
 
 // Middleware
 import { errorHandler } from './middleware/error.js';
@@ -192,9 +191,6 @@ app.route('/api/products', productsRoutes);
 app.route('/api/stores', storesRoutes);
 app.route('/api/admin', adminRoutes);
 app.route('/api/sku-map', skuMapRoutes);
-
-// ── TEMPORARY: Migration endpoint - REMOVE AFTER USE! ──
-app.route('/api/migration', migrationRoutes);
 
 // ── Cache stats (in-memory) ──
 app.get('/api/cache/stats', (c) => {

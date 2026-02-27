@@ -145,66 +145,87 @@ admin.get('/system', async (c) => {
 
 // List all invite links
 admin.get('/invite-links', async (c) => {
-  const result = await db.query(`
-    SELECT il.*,
-           creator.email as created_by_email,
-           used_owner.email as used_by_email,
-           used_owner.first_name as used_by_name
-    FROM invite_links il
-    LEFT JOIN brand_owners creator ON creator.id = il.created_by
-    LEFT JOIN brand_owners used_owner ON used_owner.id = il.used_by
-    ORDER BY il.created_at DESC
-    LIMIT 50
-  `);
+  try {
+    const result = await db.query(`
+      SELECT il.*,
+             creator.email as created_by_email,
+             used_owner.email as used_by_email,
+             used_owner.first_name as used_by_name
+      FROM invite_links il
+      LEFT JOIN brand_owners creator ON creator.id = il.created_by
+      LEFT JOIN brand_owners used_owner ON used_owner.id = il.used_by
+      ORDER BY il.created_at DESC
+      LIMIT 50
+    `);
 
-  return c.json({ success: true, data: result.rows });
+    return c.json({ success: true, data: result.rows });
+  } catch (error: any) {
+    if (error.message?.includes('does not exist')) {
+      return c.json({ success: true, data: [] });
+    }
+    throw error;
+  }
 });
 
 // Generate a new invite link (one-time use, expires in 10 minutes)
 admin.post('/invite-links', async (c) => {
-  const ownerId = c.get('ownerId');
-  const body = await c.req.json().catch(() => ({}));
-  const { recipientEmail, notes } = body as { recipientEmail?: string; notes?: string };
+  try {
+    const ownerId = c.get('ownerId');
+    const body = await c.req.json().catch(() => ({}));
+    const { recipientEmail, notes } = body as { recipientEmail?: string; notes?: string };
 
-  const token = crypto.randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + INVITE_EXPIRY_MINUTES * 60 * 1000).toISOString();
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + INVITE_EXPIRY_MINUTES * 60 * 1000).toISOString();
 
-  const result = await db.query(
-    `INSERT INTO invite_links (token, created_by, recipient_email, expires_at, notes)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING *`,
-    [token, ownerId, recipientEmail || null, expiresAt, notes || null]
-  );
+    const result = await db.query(
+      `INSERT INTO invite_links (token, created_by, recipient_email, expires_at, notes)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [token, ownerId, recipientEmail || null, expiresAt, notes || null]
+    );
 
-  const origin = process.env.FRONTEND_URL || 'http://localhost:3001';
-  const inviteUrl = `${origin}/register?invite=${token}`;
+    const origin = process.env.FRONTEND_URL || 'http://localhost:3001';
+    const inviteUrl = `${origin}/register?invite=${token}`;
 
-  return c.json({
-    success: true,
-    data: {
-      ...result.rows[0],
-      inviteUrl,
-      expiresInMinutes: INVITE_EXPIRY_MINUTES,
+    return c.json({
+      success: true,
+      data: {
+        ...result.rows[0],
+        inviteUrl,
+        expiresInMinutes: INVITE_EXPIRY_MINUTES,
+      }
+    }, 201);
+  } catch (error: any) {
+    if (error.message?.includes('does not exist')) {
+      throw new HTTPException(503, { message: 'Invite system not initialized. Please run database migrations.' });
     }
-  }, 201);
+    throw error;
+  }
 });
 
 // Revoke an invite link
 admin.delete('/invite-links/:id', async (c) => {
-  const { id } = c.req.param();
+  try {
+    const { id } = c.req.param();
 
-  const result = await db.query(
-    `UPDATE invite_links SET is_used = true, used_at = NOW()
-     WHERE id = $1 AND is_used = false
-     RETURNING *`,
-    [id]
-  );
+    const result = await db.query(
+      `UPDATE invite_links SET is_used = true, used_at = NOW()
+       WHERE id = $1 AND is_used = false
+       RETURNING *`,
+      [id]
+    );
 
-  if (result.rows.length === 0) {
-    throw new HTTPException(404, { message: 'Invite link not found or already used' });
+    if (result.rows.length === 0) {
+      throw new HTTPException(404, { message: 'Invite link not found or already used' });
+    }
+
+    return c.json({ success: true, data: result.rows[0] });
+  } catch (error: any) {
+    if (error.message?.includes('does not exist')) {
+      throw new HTTPException(503, { message: 'Invite system not initialized. Please run database migrations.' });
+    }
+    throw error;
   }
-
-  return c.json({ success: true, data: result.rows[0] });
 });
 
 // ═══════════════════════════════════════════════════════════════

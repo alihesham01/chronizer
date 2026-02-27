@@ -8,7 +8,7 @@ import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
-import { api, CacheStats, QueueStats, HealthStatus } from '@/lib/api';
+import { api, CacheStats, HealthStatus } from '@/lib/api';
 import { useToast } from '@/components/ui/use-toast';
 import { motion } from 'framer-motion';
 import {
@@ -29,7 +29,6 @@ export default function SystemPage() {
   const [loading, setLoading] = useState(true);
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
-  const [queueStats, setQueueStats] = useState<QueueStats | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
 
   useEffect(() => {
@@ -40,15 +39,13 @@ export default function SystemPage() {
 
   const fetchSystemData = async () => {
     try {
-      const [healthData, cacheData, queueData] = await Promise.all([
+      const [healthData, cacheData] = await Promise.all([
         api.getHealth(),
         api.getCacheStats(),
-        api.getQueueStats(),
       ]);
       
       setHealth(healthData);
       setCacheStats(cacheData);
-      setQueueStats(queueData);
       setLastUpdated(new Date());
     } catch (error) {
       console.error('Failed to fetch system data:', error);
@@ -158,32 +155,55 @@ export default function SystemPage() {
         </div>
       </motion.div>
 
-      {/* Service Status */}
+      {/* Health Status */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
       >
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Server className="h-5 w-5" />
-              Service Status
+              System Health
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              {Object.entries(health?.services || {}).map(([service, status]) => (
-                <div key={service} className="flex items-center justify-between p-3 rounded-lg border">
-                  <div className="flex items-center gap-2">
-                    {getStatusIcon(status.status)}
-                    <span className="capitalize font-medium">{service}</span>
-                  </div>
-                  <Badge variant={getStatusVariant(status.status)}>
-                    {status.status}
-                  </Badge>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {getStatusIcon(health?.status || 'error')}
+                <span className="font-medium">Overall Status</span>
+              </div>
+              <Badge variant={getStatusVariant(health?.status || 'error')}>
+                {health?.status || 'Unknown'}
+              </Badge>
+            </div>
+            
+            <Separator />
+            
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Database</span>
+                <div className="flex items-center gap-2">
+                  {getStatusIcon(health?.services?.database || 'error')}
+                  <span className="text-sm font-medium">
+                    {health?.services?.database || 'Unknown'}
+                  </span>
                 </div>
-              ))}
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Cache</span>
+                <div className="flex items-center gap-2">
+                  {getStatusIcon(health?.services?.cache || 'error')}
+                  <span className="text-sm font-medium">
+                    {health?.services?.cache || 'Unknown'}
+                  </span>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex items-center justify-between text-sm text-muted-foreground">
+              <span>Version</span>
+              <span>{health?.version || 'Unknown'}</span>
             </div>
           </CardContent>
         </Card>
@@ -193,7 +213,6 @@ export default function SystemPage() {
       <Tabs defaultValue="cache" className="space-y-4">
         <TabsList>
           <TabsTrigger value="cache">Cache Metrics</TabsTrigger>
-          <TabsTrigger value="queue">Queue Metrics</TabsTrigger>
           <TabsTrigger value="performance">Performance</TabsTrigger>
         </TabsList>
 
@@ -222,27 +241,20 @@ export default function SystemPage() {
               </CardHeader>
               <CardContent className="space-y-6">
                 {/* Hit Rates */}
-                <div className="grid gap-4 md:grid-cols-3">
+                <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
-                      <span>L1 Cache Hit Rate</span>
-                      <span className="font-medium">{cacheStats?.metrics.l1.hitRate.toFixed(1)}%</span>
+                      <span>Cache Hit Rate</span>
+                      <span className="font-medium">{cacheStats?.hitRate.toFixed(1)}%</span>
                     </div>
-                    <Progress value={cacheStats?.metrics.l1.hitRate || 0} className="h-2" />
+                    <Progress value={cacheStats?.hitRate || 0} className="h-2" />
                   </div>
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
-                      <span>L2 Cache Hit Rate</span>
-                      <span className="font-medium">{cacheStats?.metrics.l2.hitRate.toFixed(1)}%</span>
+                      <span>Cache Size</span>
+                      <span className="font-medium">{cacheStats?.size || 0} items</span>
                     </div>
-                    <Progress value={cacheStats?.metrics.l2.hitRate || 0} className="h-2" />
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span>Overall Hit Rate</span>
-                      <span className="font-medium">{cacheStats?.metrics.overall.hitRate.toFixed(1)}%</span>
-                    </div>
-                    <Progress value={cacheStats?.metrics.overall.hitRate || 0} className="h-2" />
+                    <Progress value={(cacheStats?.size || 0) / 1000 * 100} className="h-2" />
                   </div>
                 </div>
 
@@ -251,94 +263,29 @@ export default function SystemPage() {
                 {/* Cache Stats */}
                 <div className="grid gap-4 md:grid-cols-3">
                   <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground">L1 Cache Size</p>
-                    <p className="text-2xl font-bold">
-                      {((cacheStats?.l1?.size || 0) / 1024 / 1024).toFixed(1)} MB
-                    </p>
+                    <p className="text-sm text-muted-foreground">Total Hits</p>
+                    <p className="text-2xl font-bold">{formatNumber(cacheStats?.hits || 0)}</p>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground">Items Cached</p>
-                    <p className="text-2xl font-bold">{formatNumber(cacheStats?.l1.itemCount || 0)}</p>
+                    <p className="text-sm text-muted-foreground">Total Misses</p>
+                    <p className="text-2xl font-bold">{formatNumber(cacheStats?.misses || 0)}</p>
                   </div>
                   <div className="space-y-1">
                     <p className="text-sm text-muted-foreground">Evictions</p>
-                    <p className="text-2xl font-bold">{formatNumber(cacheStats?.l1.evictions || 0)}</p>
+                    <p className="text-2xl font-bold">{formatNumber(cacheStats?.evictions || 0)}</p>
                   </div>
                 </div>
 
-                <Separator />
-
-                {/* Hit/Miss Counts */}
                 <div className="grid gap-4 md:grid-cols-2">
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-2">Cache Hits</p>
-                    <div className="space-y-1">
-                      <div className="flex justify-between">
-                        <span>L1:</span>
-                        <span className="font-medium">{formatNumber(cacheStats?.metrics.l1.hits || 0)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>L2:</span>
-                        <span className="font-medium">{formatNumber(cacheStats?.metrics.l2.hits || 0)}</span>
-                      </div>
-                    </div>
+                  <div className="space-y-1">
+                    <p className="text-sm text-muted-foreground">Memory Usage</p>
+                    <p className="text-2xl font-bold">{cacheStats?.memoryUsage || 'N/A'}</p>
                   </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-2">Cache Misses</p>
-                    <div className="space-y-1">
-                      <div className="flex justify-between">
-                        <span>L1:</span>
-                        <span className="font-medium">{formatNumber(cacheStats?.metrics.l1.misses || 0)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>L2:</span>
-                        <span className="font-medium">{formatNumber(cacheStats?.metrics.l2.misses || 0)}</span>
-                      </div>
-                    </div>
+                  <div className="space-y-1">
+                    <p className="text-sm text-muted-foreground">Total Sets</p>
+                    <p className="text-2xl font-bold">{formatNumber(cacheStats?.sets || 0)}</p>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-        </TabsContent>
-
-        <TabsContent value="queue" className="space-y-4">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-          >
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Activity className="h-5 w-5" />
-                  Queue Statistics
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {Object.entries(queueStats?.queueStats || {}).map(([queue, stats]) => (
-                  <div key={queue} className="space-y-4">
-                    <h3 className="text-lg font-semibold capitalize">{queue} Queue</h3>
-                    <div className="grid gap-4 md:grid-cols-4">
-                      <div className="space-y-1">
-                        <p className="text-sm text-muted-foreground">Waiting</p>
-                        <p className="text-2xl font-bold">{formatNumber(stats.waiting)}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-sm text-muted-foreground">Active</p>
-                        <p className="text-2xl font-bold">{formatNumber(stats.active)}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-sm text-muted-foreground">Completed</p>
-                        <p className="text-2xl font-bold">{formatNumber(stats.completed)}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-sm text-muted-foreground">Failed</p>
-                        <p className="text-2xl font-bold text-red-600">{formatNumber(stats.failed)}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
               </CardContent>
             </Card>
           </motion.div>

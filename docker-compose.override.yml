@@ -1,0 +1,28 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - NODE_OPTIONS=--max-old-space-size=4096
+    environment:
+      - NODE_OPTIONS=--max-old-space-size=4096
+    mem_limit: 2g
+    memswap_limit: 2g
+
+  postgres:
+    environment:
+      POSTGRES_DB: woke_portal
+      POSTGRES_USER: woke_user
+      POSTGRES_PASSWORD: 9b2bf7e48b4aa7da
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U woke_user -d woke_portal"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+volumes:
+  postgres_data:

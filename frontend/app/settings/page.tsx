@@ -22,22 +22,7 @@ export default function SettingsPage() {
   const ownerInfo = JSON.parse(localStorage.getItem('owner_info') || '{}');
 
   const handleInviteUser = async () => {
-    if (!inviteEmail) {
-      setMessage({ type: 'error', text: 'Please enter an email address' });
-      return;
-    }
-
-    setLoading(true);
-    try {
-      // This would be an API call to send invitation
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      setMessage({ type: 'success', text: `Invitation sent to ${inviteEmail}` });
-      setInviteEmail('');
-    } catch (error) {
-      setMessage({ type: 'error', text: 'Failed to send invitation' });
-    } finally {
-      setLoading(false);
-    }
+    setMessage({ type: 'error', text: 'User invitations are managed by the admin. Contact admin@chronizer.com to request an invite link.' });
   };
 
   const handleChangePassword = async () => {
@@ -51,16 +36,28 @@ export default function SettingsPage() {
       return;
     }
 
+    if (newPassword.length < 8) {
+      setMessage({ type: 'error', text: 'New password must be at least 8 characters' });
+      return;
+    }
+
     setLoading(true);
     try {
-      // This would be an API call to change password
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const token = localStorage.getItem('auth_token');
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+      const res = await fetch(`${API_BASE}/api/auth/change-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to change password');
       setMessage({ type: 'success', text: 'Password changed successfully' });
       setNewPassword('');
       setConfirmPassword('');
       setCurrentPassword('');
-    } catch (error) {
-      setMessage({ type: 'error', text: 'Failed to change password' });
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error.message || 'Failed to change password' });
     } finally {
       setLoading(false);
     }

@@ -10,13 +10,7 @@
     "db:setup": "tsx scripts/setup-db.ts",
     "test": "echo \"Tests not implemented yet\" && exit 0",
     "lint": "echo \"Linting not implemented yet\" && exit 0",
-    "security:check": "npm audit --audit-level high",
-    "security:fix": "npm audit fix --force",
-    "generate:jwt": "node scripts/generate-jwt-secret.js",
-    "setup:production": "node scripts/setup-production.js",
-    "setup:database": "node scripts/setup-database.js",
     "docker:build": "docker build --no-cache -t chronizer-backend .",
-    "docker:build:optimized": "scripts/docker-build.bat",
     "docker:run": "docker-compose up -d",
     "docker:logs": "docker-compose logs -f",
     "docker:down": "docker-compose down"

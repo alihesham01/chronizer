@@ -1,7 +1,26 @@
--- New Features Migration
--- Run this in pgAdmin Query Tool on your production database
+-- Full Migration: Run in pgAdmin Query Tool on your production database
+-- This is idempotent — safe to run multiple times.
 
--- 1. invite_links table for admin invite system
+-- ─── 1. Missing columns on brand_owners ──────────────────────
+ALTER TABLE brand_owners ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT false;
+ALTER TABLE brand_owners ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ;
+ALTER TABLE brand_owners ADD COLUMN IF NOT EXISTS last_active TIMESTAMPTZ;
+
+-- ─── 2. Missing column on stores ─────────────────────────────
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS location TEXT;
+
+-- ─── 3. activity_log table (audit trail) ─────────────────────
+CREATE TABLE IF NOT EXISTS activity_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  brand_id UUID REFERENCES brands(id) ON DELETE CASCADE,
+  owner_id UUID REFERENCES brand_owners(id) ON DELETE SET NULL,
+  action VARCHAR(100) NOT NULL,
+  details JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_activity_brand ON activity_log(brand_id, created_at DESC);
+
+-- ─── 4. invite_links table ───────────────────────────────────
 CREATE TABLE IF NOT EXISTS invite_links (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   token VARCHAR(255) NOT NULL UNIQUE,
@@ -14,11 +33,23 @@ CREATE TABLE IF NOT EXISTS invite_links (
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
-
 CREATE INDEX IF NOT EXISTS idx_invite_token ON invite_links(token);
-CREATE INDEX IF NOT EXISTS idx_invite_created_by ON invite_links(created_by);
 
--- 2. unmapped_skus table for flagging unresolved SKUs during transaction imports
+-- ─── 5. sku_store_map table (external SKU → internal product) ──
+CREATE TABLE IF NOT EXISTS sku_store_map (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  brand_id UUID NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
+  store_group VARCHAR(255) NOT NULL,
+  store_sku VARCHAR(255) NOT NULL,
+  product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(brand_id, store_group, store_sku)
+);
+CREATE INDEX IF NOT EXISTS idx_sku_map_brand ON sku_store_map(brand_id, store_group);
+
+-- ─── 6. unmapped_skus table ──────────────────────────────────
 CREATE TABLE IF NOT EXISTS unmapped_skus (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   brand_id UUID NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
@@ -36,9 +67,10 @@ CREATE TABLE IF NOT EXISTS unmapped_skus (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(brand_id, external_sku, store_group)
 );
-
 CREATE INDEX IF NOT EXISTS idx_unmapped_brand ON unmapped_skus(brand_id, status);
-CREATE INDEX IF NOT EXISTS idx_unmapped_sku ON unmapped_skus(brand_id, external_sku);
+
+-- ─── 7. Set admin account ────────────────────────────────────
+UPDATE brand_owners SET is_admin = true WHERE email = 'admin@chronizer.com';
 
 -- Done!
-SELECT 'New features migration completed!' as result;
+SELECT 'Migration completed successfully!' as result;

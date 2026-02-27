@@ -45,7 +45,7 @@ export class StoresController {
   static async createStore(c: Context) {
     const brandId = getBrandId(c);
     const body = await c.req.json();
-    const { name, display_name, code, group_name, commission, rent, activation_date } = body;
+    const { name, display_name, code, group_name, location, commission, rent, activation_date } = body;
 
     if (!name) throw new HTTPException(400, { message: 'Store name is required' });
 
@@ -55,9 +55,9 @@ export class StoresController {
     }
 
     const result = await db.query(
-      `INSERT INTO stores (brand_id, name, display_name, code, group_name, commission, rent, activation_date)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [brandId, name, display_name || name, code, group_name, commission, rent, activation_date || new Date().toISOString()]
+      `INSERT INTO stores (brand_id, name, display_name, code, group_name, location, commission, rent, activation_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [brandId, name, display_name || name, code, group_name, location || null, commission, rent, activation_date || new Date().toISOString()]
     );
     await auditLog(brandId, c.get('ownerId'), 'store_created', { id: result.rows[0].id, name });
     return c.json({ success: true, data: result.rows[0] }, 201);
@@ -71,7 +71,7 @@ export class StoresController {
     const existing = await db.query('SELECT id FROM stores WHERE id = $1 AND brand_id = $2', [id, brandId]);
     if (existing.rows.length === 0) throw new HTTPException(404, { message: 'Store not found' });
 
-    const allowed = ['name','display_name','code','group_name','commission','rent','activation_date','deactivation_date','is_active'];
+    const allowed = ['name','display_name','code','group_name','location','commission','rent','activation_date','deactivation_date','is_active'];
     const sets: string[] = [];
     const params: any[] = [];
     let pi = 1;
@@ -116,9 +116,9 @@ export class StoresController {
         if (!s.name) { errors.push({ row: i+1, error: 'name required' }); continue; }
         try {
           const res = await client.query(
-            `INSERT INTO stores (brand_id, name, display_name, code, group_name, commission, rent, activation_date)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-            [brandId, s.name, s.display_name || s.name, s.code, s.group_name, s.commission, s.rent, s.activation_date || new Date().toISOString()]
+            `INSERT INTO stores (brand_id, name, display_name, code, group_name, location, commission, rent, activation_date)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+            [brandId, s.name, s.display_name || s.name, s.code, s.group_name, s.location || null, s.commission, s.rent, s.activation_date || new Date().toISOString()]
           );
           results.push(res.rows[0]);
         } catch (err: any) {

@@ -195,12 +195,14 @@ auth.post('/register', zValidator('json', registerSchemaWithInvite), async (c) =
       [owner.id, invite.id]
     );
 
-    // Log activity
-    await client.query(
-      `INSERT INTO activity_log (brand_id, owner_id, action, details)
-       VALUES ($1, $2, 'account_created', $3)`,
-      [brand.id, owner.id, JSON.stringify({ brandName, subdomain, email: email.toLowerCase() })]
-    );
+    // Log activity (non-critical — don't fail registration if table missing)
+    try {
+      await client.query(
+        `INSERT INTO activity_log (brand_id, owner_id, action, details)
+         VALUES ($1, $2, 'account_created', $3)`,
+        [brand.id, owner.id, JSON.stringify({ brandName, subdomain, email: email.toLowerCase() })]
+      );
+    } catch { /* activity_log table may not exist yet */ }
 
     await client.query('COMMIT');
 

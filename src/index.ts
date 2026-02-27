@@ -64,7 +64,7 @@ app.use('*', honoLogger());
 // CORS
 app.use('*', cors({
   origin: env.NODE_ENV === 'production'
-    ? [process.env.CORS_ORIGIN || 'http://localhost:3001']
+    ? (process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : ['http://localhost:3001'])
     : '*',
   credentials: true,
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],

@@ -38,18 +38,22 @@ export default function AdminDashboard() {
     fetch(`${API_BASE}/api/admin/stats`, {
       headers: { Authorization: `Bearer ${token}` }
     })
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) {
+          if (r.status === 401) throw new Error('Authentication expired. Please login again.');
+          if (r.status === 403) throw new Error('You do not have admin access.');
+          throw new Error(`Server error: ${r.status}`);
+        }
+        return r.json();
+      })
       .then(data => {
         if (data.success) {
           setStats(data.data);
         } else {
-          setError(data.error || 'Failed to load admin stats');
-          if (data.error === 'Admin access required') {
-            setError('You do not have admin access. Contact the system administrator.');
-          }
+          setError(typeof data.error === 'string' ? data.error : 'Failed to load admin stats');
         }
       })
-      .catch(() => setError('Failed to connect to server'))
+      .catch((err) => setError(typeof err.message === 'string' ? err.message : 'Failed to connect to server'))
       .finally(() => setLoading(false));
   }, [router]);
 

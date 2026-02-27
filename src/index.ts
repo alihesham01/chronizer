@@ -98,7 +98,7 @@ app.use('/api/*', async (c, next) => {
 
   try {
     const token = authHeader.substring(7);
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || '') as any;
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-dev-secret-change-me') as any;
 
     if (decoded.brandId) {
       c.set('brandId', decoded.brandId);

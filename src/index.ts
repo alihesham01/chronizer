@@ -26,6 +26,7 @@ import { productsRoutes } from './routes/products.routes.js';
 import { storesRoutes } from './routes/stores.routes.js';
 import { adminRoutes } from './routes/admin.routes.js';
 import { skuMapRoutes } from './routes/sku-map.routes.js';
+import { unmappedSkusRoutes } from './routes/unmapped-skus.routes.js';
 
 // Middleware
 import { errorHandler } from './middleware/error.js';
@@ -191,6 +192,7 @@ app.route('/api/products', productsRoutes);
 app.route('/api/stores', storesRoutes);
 app.route('/api/admin', adminRoutes);
 app.route('/api/sku-map', skuMapRoutes);
+app.route('/api/unmapped-skus', unmappedSkusRoutes);
 
 // ── Cache stats (in-memory) ──
 app.get('/api/cache/stats', (c) => {

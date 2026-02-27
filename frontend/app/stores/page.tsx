@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { storesApi, Store, StoreFilters } from '@/lib/stores';
+import { AddStoreDialog } from '@/components/add-store-dialog';
 
 export default function StoresPage() {
   const router = useRouter();
@@ -29,17 +30,9 @@ export default function StoresPage() {
   });
   const [bulkMode, setBulkMode] = useState(false);
   const [selectedStores, setSelectedStores] = useState<string[]>([]);
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [showAddDialog, setShowAddDialog] = useState(false);
   const [showBulkForm, setShowBulkForm] = useState(false);
   const [bulkText, setBulkText] = useState('');
-  const [newStore, setNewStore] = useState<Partial<Store>>({
-    name: '',
-    group: '',
-    commission: 0,
-    rent: 0,
-    activation_date: '',
-    deactivation_date: ''
-  });
 
   const loadStores = async () => {
     try {
@@ -60,22 +53,26 @@ export default function StoresPage() {
     }
   };
 
-  const handleAddStore = async () => {
-    try {
-      const response = await storesApi.createStore(newStore as Omit<Store, 'id' | 'brand_id' | 'created_at' | 'updated_at'>);
+  const handleAddStoreWithBranches = async (storeName: string, branches: { name: string; location: string; code: string; commission: number; rent: number }[]) => {
+    const storesToCreate = branches.map(branch => ({
+      name: branch.name,
+      display_name: `${storeName} - ${branch.name}`,
+      group_name: storeName,
+      code: branch.code || undefined,
+      location: branch.location || undefined,
+      commission: branch.commission || 0,
+      rent: branch.rent || 0,
+      activation_date: new Date().toISOString(),
+    }));
+
+    if (storesToCreate.length === 1) {
+      const response = await storesApi.createStore(storesToCreate[0] as any);
       setStores([response, ...stores]);
-      setShowAddForm(false);
-      setNewStore({
-        name: '',
-        group: '',
-        commission: 0,
-        rent: 0,
-        activation_date: '',
-        deactivation_date: ''
-      });
-      alert('Store added successfully');
-    } catch (error: any) {
-      alert(error.message || 'Failed to add store');
+    } else {
+      const response = await storesApi.bulkCreateStores(storesToCreate as any);
+      if (response.success) {
+        loadStores();
+      }
     }
   };
 
@@ -295,64 +292,21 @@ export default function StoresPage() {
                     Update Selected ({selectedStores.length})
                   </Button>
                 )}
-                <Button onClick={() => setShowAddForm(!showAddForm)}>
-                  {showAddForm ? 'Cancel' : 'Add Store'}
+                <Button onClick={() => setShowAddDialog(true)}>
+                  Add Store
                 </Button>
                 <Button variant="outline" onClick={() => setShowBulkForm(!showBulkForm)}>
                   {showBulkForm ? 'Cancel' : 'Bulk Add'}
                 </Button>
               </div>
               
-              {/* Add Store Form */}
-              {showAddForm && (
-                <div className="border rounded-lg p-4 mb-4 bg-gray-50">
-                  <h3 className="text-lg font-semibold mb-4">Add New Store</h3>
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                    <Input
-                      placeholder="Store Name*"
-                      value={newStore.name}
-                      onChange={(e) => setNewStore(prev => ({ ...prev, name: e.target.value }))}
-                    />
-                    <Input
-                      placeholder="Group"
-                      value={newStore.group}
-                      onChange={(e) => setNewStore(prev => ({ ...prev, group: e.target.value }))}
-                    />
-                    <Input
-                      type="number"
-                      step="0.01"
-                      placeholder="Commission %"
-                      value={newStore.commission}
-                      onChange={(e) => setNewStore(prev => ({ ...prev, commission: parseFloat(e.target.value) || 0 }))}
-                    />
-                    <Input
-                      type="number"
-                      step="0.01"
-                      placeholder="Rent"
-                      value={newStore.rent}
-                      onChange={(e) => setNewStore(prev => ({ ...prev, rent: parseFloat(e.target.value) || 0 }))}
-                    />
-                    <Input
-                      type="date"
-                      placeholder="Activation Date"
-                      value={newStore.activation_date}
-                      onChange={(e) => setNewStore(prev => ({ ...prev, activation_date: e.target.value }))}
-                    />
-                    <Input
-                      type="date"
-                      placeholder="Deactivation Date"
-                      value={newStore.deactivation_date}
-                      onChange={(e) => setNewStore(prev => ({ ...prev, deactivation_date: e.target.value }))}
-                    />
-                  </div>
-                  <div className="mt-4">
-                    <Button onClick={handleAddStore} disabled={!newStore.name}>
-                      Save Store
-                    </Button>
-                  </div>
-                </div>
-              )}
-              
+              {/* Add Store Dialog */}
+              <AddStoreDialog
+                open={showAddDialog}
+                onOpenChange={setShowAddDialog}
+                onSubmit={handleAddStoreWithBranches}
+              />
+
               {/* Bulk Add Form */}
               {showBulkForm && (
                 <div className="border rounded-lg p-4 mb-4 bg-gray-50">

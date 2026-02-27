@@ -101,6 +101,12 @@ app.use('/api/*', async (c, next) => {
     const token = authHeader.substring(7);
     const decoded = jwt.verify(token, env.JWT_SECRET) as any;
 
+    // Always set ownerId if present (needed for admin routes)
+    if (decoded.ownerId) {
+      c.set('ownerId', decoded.ownerId);
+      c.set('brandOwner', { id: decoded.ownerId, email: decoded.email });
+    }
+
     if (decoded.brandId) {
       c.set('brandId', decoded.brandId);
 
@@ -118,11 +124,6 @@ app.use('/api/*', async (c, next) => {
         }
       }
       if (brand) c.set('brand', brand);
-
-      if (decoded.ownerId) {
-        c.set('ownerId', decoded.ownerId);
-        c.set('brandOwner', { id: decoded.ownerId, email: decoded.email });
-      }
     }
   } catch {
     // Invalid token — continue without context, individual routes will reject if needed

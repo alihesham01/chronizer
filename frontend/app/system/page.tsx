@@ -13,7 +13,6 @@ import { useToast } from '@/components/ui/use-toast';
 import { motion } from 'framer-motion';
 import {
   Database,
-  Zap,
   Activity,
   Server,
   Clock,
@@ -51,23 +50,6 @@ export default function SystemPage() {
       console.error('Failed to fetch system data:', error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleWarmCache = async () => {
-    try {
-      await api.warmCache();
-      toast({
-        title: 'Success',
-        description: 'Cache warmed successfully',
-      });
-      fetchSystemData();
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to warm cache',
-        variant: 'destructive',
-      });
     }
   };
 
@@ -229,10 +211,6 @@ export default function SystemPage() {
                   Cache Performance
                 </CardTitle>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={handleWarmCache}>
-                    <Zap className="h-4 w-4 mr-2" />
-                    Warm Cache
-                  </Button>
                   <Button variant="outline" size="sm" onClick={handleClearCache}>
                     <Trash2 className="h-4 w-4 mr-2" />
                     Clear Cache

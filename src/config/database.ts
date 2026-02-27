@@ -17,6 +17,7 @@ export function getDatabase(): Pool {
         max: parseInt(process.env.DB_POOL_SIZE || '20'),
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 5000,
+        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
       });
     } else {
       console.log('Using individual DB params:');

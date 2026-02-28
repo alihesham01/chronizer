@@ -100,8 +100,8 @@ export default function BrandsPage() {
                   </thead>
                   <tbody>
                     {brands.map((brand) => (
-                      <tr key={brand.id} className="border-b last:border-0">
-                        <td className="py-3 font-medium">{brand.name}</td>
+                      <tr key={brand.id} className="border-b last:border-0 hover:bg-gray-50 cursor-pointer" onClick={() => router.push(`/admin/brands/${brand.id}`)}>
+                        <td className="py-3 font-medium text-blue-600 hover:underline">{brand.name}</td>
                         <td className="py-3">
                           <span className="font-mono text-xs bg-gray-100 px-2 py-1 rounded">
                             {brand.subdomain}

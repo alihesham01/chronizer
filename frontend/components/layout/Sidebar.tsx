@@ -17,7 +17,9 @@ import {
   LogOut,
   Menu,
   X,
-  GitCompareArrows
+  GitCompareArrows,
+  Upload,
+  CircleAlert
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -66,18 +68,30 @@ export default function Sidebar({ brand, owner }: SidebarProps) {
       title: 'Inventory',
       icon: Archive,
       href: '/inventory',
-      badge: 'New'
+      badge: null
     },
     {
       title: 'Stock Moves',
       icon: Truck,
       href: '/stock-moves',
-      badge: 'New'
+      badge: null
     },
     {
       title: 'SKU Map',
       icon: GitCompareArrows,
       href: '/sku-map',
+      badge: null
+    },
+    {
+      title: 'Unmapped SKUs',
+      icon: CircleAlert,
+      href: '/sku-map/unmapped',
+      badge: 'New'
+    },
+    {
+      title: 'Import',
+      icon: Upload,
+      href: '/transactions/import',
       badge: 'New'
     },
     {

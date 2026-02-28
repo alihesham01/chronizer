@@ -69,7 +69,21 @@ CREATE TABLE IF NOT EXISTS unmapped_skus (
 );
 CREATE INDEX IF NOT EXISTS idx_unmapped_brand ON unmapped_skus(brand_id, status);
 
--- ─── 7. Set admin account ────────────────────────────────────
+-- ─── 7. notifications table ─────────────────────────────────
+CREATE TABLE IF NOT EXISTS notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  brand_id UUID REFERENCES brands(id) ON DELETE CASCADE,
+  owner_id UUID REFERENCES brand_owners(id) ON DELETE CASCADE,
+  title VARCHAR(255) NOT NULL,
+  message TEXT,
+  type VARCHAR(50) DEFAULT 'info' CHECK (type IN ('info', 'success', 'warning', 'error')),
+  is_read BOOLEAN DEFAULT false,
+  link VARCHAR(500),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_owner ON notifications(owner_id, is_read, created_at DESC);
+
+-- ─── 8. Set admin account ────────────────────────────────────
 UPDATE brand_owners SET is_admin = true WHERE email = 'admin@chronizer.com';
 
 -- Done!

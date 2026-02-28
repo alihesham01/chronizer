@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,43 +8,63 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { auth } from '@/lib/auth';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [inviteEmail, setInviteEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
 
-  const brandInfo = JSON.parse(localStorage.getItem('brand_info') || '{}');
-  const ownerInfo = JSON.parse(localStorage.getItem('owner_info') || '{}');
+  const [brandInfo, setBrandInfo] = useState<any>({});
+  const [ownerInfo, setOwnerInfo] = useState<any>({});
+  const [brandName, setBrandName] = useState('');
+  const [primaryColor, setPrimaryColor] = useState('#3b82f6');
+  const [secondaryColor, setSecondaryColor] = useState('#64748b');
 
-  const handleInviteUser = async () => {
-    setMessage({ type: 'error', text: 'User invitations are managed by the admin. Contact admin@chronizer.com to request an invite link.' });
+  useEffect(() => {
+    const bi = JSON.parse(localStorage.getItem('brand_info') || '{}');
+    const oi = JSON.parse(localStorage.getItem('owner_info') || '{}');
+    setBrandInfo(bi);
+    setOwnerInfo(oi);
+    setBrandName(bi.name || '');
+    setPrimaryColor(bi.primaryColor || '#3b82f6');
+    setSecondaryColor(bi.secondaryColor || '#64748b');
+  }, []);
+
+  const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+
+  const handleSaveBrand = async () => {
+    setLoading(true);
+    setMessage(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/brand/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: brandName, primaryColor, secondaryColor }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update brand');
+      const updated = { ...brandInfo, name: data.data.name, primaryColor: data.data.primary_color, secondaryColor: data.data.secondary_color };
+      setBrandInfo(updated);
+      localStorage.setItem('brand_info', JSON.stringify(updated));
+      setMessage({ type: 'success', text: 'Brand settings updated' });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleChangePassword = async () => {
-    if (newPassword !== confirmPassword) {
-      setMessage({ type: 'error', text: 'Passwords do not match' });
-      return;
-    }
-
-    if (!currentPassword) {
-      setMessage({ type: 'error', text: 'Please enter your current password' });
-      return;
-    }
-
-    if (newPassword.length < 8) {
-      setMessage({ type: 'error', text: 'New password must be at least 8 characters' });
-      return;
-    }
+    if (newPassword !== confirmPassword) { setMessage({ type: 'error', text: 'Passwords do not match' }); return; }
+    if (!currentPassword) { setMessage({ type: 'error', text: 'Please enter your current password' }); return; }
+    if (newPassword.length < 8) { setMessage({ type: 'error', text: 'New password must be at least 8 characters' }); return; }
 
     setLoading(true);
     try {
-      const token = localStorage.getItem('auth_token');
-      const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
       const res = await fetch(`${API_BASE}/api/auth/change-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -53,9 +73,7 @@ export default function SettingsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to change password');
       setMessage({ type: 'success', text: 'Password changed successfully' });
-      setNewPassword('');
-      setConfirmPassword('');
-      setCurrentPassword('');
+      setNewPassword(''); setConfirmPassword(''); setCurrentPassword('');
     } catch (error: any) {
       setMessage({ type: 'error', text: error.message || 'Failed to change password' });
     } finally {
@@ -82,7 +100,6 @@ export default function SettingsPage() {
         <TabsList>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="brand">Brand</TabsTrigger>
-          <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
         </TabsList>
 
@@ -90,7 +107,7 @@ export default function SettingsPage() {
           <Card>
             <CardHeader>
               <CardTitle>Profile Information</CardTitle>
-              <CardDescription>Update your personal information</CardDescription>
+              <CardDescription>Your account details</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
@@ -107,7 +124,11 @@ export default function SettingsPage() {
                 <Label>Email</Label>
                 <Input value={ownerInfo.email || ''} disabled />
               </div>
-              <p className="text-sm text-gray-500">Contact support to update profile information</p>
+              <div>
+                <Label>Subdomain</Label>
+                <Input value={`${brandInfo.subdomain || ''}.chronizer.com`} disabled />
+              </div>
+              <p className="text-xs text-gray-400">Profile name and email cannot be changed at this time.</p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -115,61 +136,33 @@ export default function SettingsPage() {
         <TabsContent value="brand">
           <Card>
             <CardHeader>
-              <CardTitle>Brand Information</CardTitle>
-              <CardDescription>Your brand details and settings</CardDescription>
+              <CardTitle>Brand Settings</CardTitle>
+              <CardDescription>Customize your brand appearance</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
                 <Label>Brand Name</Label>
-                <Input value={brandInfo.name || ''} disabled />
+                <Input value={brandName} onChange={e => setBrandName(e.target.value)} />
               </div>
-              <div>
-                <Label>Subdomain</Label>
-                <Input value={`${brandInfo.subdomain}.chronizer.com`} disabled />
-              </div>
-              <div className="flex gap-2">
-                <Label>Primary Color</Label>
-                <div 
-                  className="w-8 h-8 rounded border"
-                  style={{ backgroundColor: brandInfo.primaryColor || '#3b82f6' }}
-                />
-              </div>
-              <p className="text-sm text-gray-500">Contact support to update brand information</p>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="users">
-          <Card>
-            <CardHeader>
-              <CardTitle>User Management</CardTitle>
-              <CardDescription>Invite users to your brand</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Enter email address"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  className="flex-1"
-                />
-                <Button onClick={handleInviteUser} disabled={loading}>
-                  {loading ? 'Sending...' : 'Send Invite'}
-                </Button>
-              </div>
-              <div className="space-y-2">
-                <h4 className="font-medium">Current Users</h4>
-                <div className="flex items-center justify-between p-3 border rounded">
-                  <div>
-                    <p className="font-medium">{ownerInfo.firstName} {ownerInfo.lastName}</p>
-                    <p className="text-sm text-gray-500">{ownerInfo.email}</p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Primary Color</Label>
+                  <div className="flex items-center gap-2">
+                    <input type="color" value={primaryColor} onChange={e => setPrimaryColor(e.target.value)} className="w-10 h-10 rounded border cursor-pointer" />
+                    <Input value={primaryColor} onChange={e => setPrimaryColor(e.target.value)} className="font-mono" />
                   </div>
-                  <Badge>Owner</Badge>
+                </div>
+                <div>
+                  <Label>Secondary Color</Label>
+                  <div className="flex items-center gap-2">
+                    <input type="color" value={secondaryColor} onChange={e => setSecondaryColor(e.target.value)} className="w-10 h-10 rounded border cursor-pointer" />
+                    <Input value={secondaryColor} onChange={e => setSecondaryColor(e.target.value)} className="font-mono" />
+                  </div>
                 </div>
               </div>
-              <p className="text-sm text-gray-500">
-                Only the brand owner can invite new users. Contact support for additional user management.
-              </p>
+              <Button onClick={handleSaveBrand} disabled={loading}>
+                {loading ? 'Saving...' : 'Save Brand Settings'}
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>
@@ -177,33 +170,21 @@ export default function SettingsPage() {
         <TabsContent value="security">
           <Card>
             <CardHeader>
-              <CardTitle>Security Settings</CardTitle>
-              <CardDescription>Manage your password and security</CardDescription>
+              <CardTitle>Change Password</CardTitle>
+              <CardDescription>Update your login credentials</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
                 <Label>Current Password</Label>
-                <Input
-                  type="password"
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                />
+                <Input type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} />
               </div>
               <div>
                 <Label>New Password</Label>
-                <Input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                />
+                <Input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Minimum 8 characters" />
               </div>
               <div>
                 <Label>Confirm New Password</Label>
-                <Input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                />
+                <Input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} />
               </div>
               <Button onClick={handleChangePassword} disabled={loading}>
                 {loading ? 'Updating...' : 'Change Password'}

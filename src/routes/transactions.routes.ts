@@ -24,4 +24,7 @@ transactions.post('/bulk', TransactionsController.bulkCreateTransactions);
 // GET /api/transactions/export - Export transactions as CSV or JSON
 transactions.get('/export', TransactionsController.exportTransactions);
 
+// POST /api/transactions/import-csv - Import transactions from CSV text
+transactions.post('/import-csv', TransactionsController.importCsv);
+
 export { transactions as transactionsRoutes };

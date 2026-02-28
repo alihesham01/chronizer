@@ -24,8 +24,11 @@ import {
   Sun,
   Zap,
   Activity,
-  GitCompareArrows
+  GitCompareArrows,
+  Upload,
+  CircleAlert
 } from 'lucide-react';
+import NotificationBell from './NotificationBell';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -36,9 +39,11 @@ const navigation = [
   { name: 'Products', href: '/products', icon: Package },
   { name: 'Stores', href: '/stores', icon: Store },
   { name: 'Transactions', href: '/transactions', icon: CreditCard },
-  { name: 'Inventory', href: '/inventory', icon: Archive, badge: 'New' },
-  { name: 'Stock Moves', href: '/stock-moves', icon: Truck, badge: 'New' },
-  { name: 'SKU Map', href: '/sku-map', icon: GitCompareArrows, badge: 'New' },
+  { name: 'Inventory', href: '/inventory', icon: Archive },
+  { name: 'Stock Moves', href: '/stock-moves', icon: Truck },
+  { name: 'SKU Map', href: '/sku-map', icon: GitCompareArrows },
+  { name: 'Unmapped SKUs', href: '/sku-map/unmapped', icon: CircleAlert, badge: 'New' },
+  { name: 'Import', href: '/transactions/import', icon: Upload, badge: 'New' },
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
@@ -252,6 +257,7 @@ export function Layout({ children }: LayoutProps) {
           </div>
 
           <div className="flex items-center gap-x-4 lg:gap-x-6">
+            <NotificationBell />
             <Button variant="ghost" size="icon" onClick={() => router.push('/settings')}>
               <Settings className="h-5 w-5" />
             </Button>

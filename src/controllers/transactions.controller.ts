@@ -258,4 +258,129 @@ export class TransactionsController {
       return c.json({ success: true, created: results.length, failed: errors.length, errors: errors.length > 0 ? errors : undefined });
     });
   }
+
+  static async importCsv(c: Context) {
+    const brandId = getBrandId(c);
+    const body = await c.req.json();
+    const { csvText, dateColumn, skuColumn, qtyColumn, priceColumn, storeColumn, statusColumn } = body;
+
+    if (!csvText || !dateColumn || !skuColumn || !qtyColumn || !priceColumn) {
+      throw new HTTPException(400, { message: 'csvText and column mappings (dateColumn, skuColumn, qtyColumn, priceColumn) required' });
+    }
+
+    // Parse CSV
+    const lines = csvText.split('\n').map((l: string) => l.trim()).filter((l: string) => l.length > 0);
+    if (lines.length < 2) throw new HTTPException(400, { message: 'CSV must have a header row and at least one data row' });
+
+    const headers = lines[0].split(',').map((h: string) => h.trim().replace(/^"|"$/g, ''));
+    const dateIdx = headers.indexOf(dateColumn);
+    const skuIdx = headers.indexOf(skuColumn);
+    const qtyIdx = headers.indexOf(qtyColumn);
+    const priceIdx = headers.indexOf(priceColumn);
+    const storeIdx = storeColumn ? headers.indexOf(storeColumn) : -1;
+    const statusIdx = statusColumn ? headers.indexOf(statusColumn) : -1;
+
+    if (dateIdx === -1 || skuIdx === -1 || qtyIdx === -1 || priceIdx === -1) {
+      throw new HTTPException(400, { message: `Column not found in CSV headers. Available: ${headers.join(', ')}` });
+    }
+
+    // Pre-fetch stores for name->id lookup
+    const storesResult = await db.query('SELECT id, name, code FROM stores WHERE brand_id = $1', [brandId]);
+    const storeMap = new Map<string, string>();
+    for (const s of storesResult.rows) {
+      storeMap.set(s.name?.toLowerCase(), s.id);
+      if (s.code) storeMap.set(s.code?.toLowerCase(), s.id);
+    }
+
+    // Parse rows into transactions array
+    const transactions: any[] = [];
+    const parseErrors: any[] = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      // Simple CSV field split (handles quoted fields)
+      const fields: string[] = [];
+      let current = '';
+      let inQuotes = false;
+      for (const ch of lines[i]) {
+        if (ch === '"') { inQuotes = !inQuotes; continue; }
+        if (ch === ',' && !inQuotes) { fields.push(current.trim()); current = ''; continue; }
+        current += ch;
+      }
+      fields.push(current.trim());
+
+      if (fields.length < headers.length) {
+        parseErrors.push({ row: i + 1, error: 'Too few columns' });
+        continue;
+      }
+
+      const qty = parseFloat(fields[qtyIdx]);
+      const price = parseFloat(fields[priceIdx]);
+      if (isNaN(qty) || isNaN(price)) {
+        parseErrors.push({ row: i + 1, error: 'Invalid quantity or price' });
+        continue;
+      }
+
+      const txn: any = {
+        transaction_date: fields[dateIdx],
+        sku: fields[skuIdx],
+        quantity_sold: qty,
+        selling_price: price,
+        status: statusIdx >= 0 ? (fields[statusIdx] || 'sale') : 'sale',
+      };
+
+      if (storeIdx >= 0 && fields[storeIdx]) {
+        const storeId = storeMap.get(fields[storeIdx].toLowerCase());
+        if (storeId) txn.store_id = storeId;
+      }
+
+      transactions.push(txn);
+    }
+
+    if (transactions.length === 0) {
+      return c.json({ success: false, error: 'No valid rows parsed', parseErrors });
+    }
+
+    // Use bulk create logic
+    return await withTransaction(async (client) => {
+      const skus = [...new Set(transactions.map(t => t.sku))];
+      const prodResult = await client.query(
+        'SELECT sku, big_sku, name, colour, size FROM products WHERE brand_id = $1 AND sku = ANY($2)',
+        [brandId, skus]
+      );
+      const prodMap = new Map(prodResult.rows.map((p: any) => [p.sku, p]));
+
+      const results: any[] = [];
+      const errors: any[] = [...parseErrors];
+      const BATCH = 500;
+
+      for (let start = 0; start < transactions.length; start += BATCH) {
+        const batch = transactions.slice(start, start + BATCH);
+        const values: any[] = [];
+        const placeholders: string[] = [];
+        let pi = 1;
+
+        for (let i = 0; i < batch.length; i++) {
+          const txn = batch[i];
+          const p = prodMap.get(txn.sku);
+          if (!p) { errors.push({ row: start + i + 2, sku: txn.sku, error: 'SKU not found in products' }); continue; }
+
+          placeholders.push(`($${pi},$${pi+1},$${pi+2},$${pi+3},$${pi+4},$${pi+5},$${pi+6},$${pi+7},$${pi+8},$${pi+9},$${pi+10},$${pi+11},$${pi+12})`);
+          values.push(brandId, txn.transaction_date, txn.store_id || null, txn.sku, p.big_sku, p.name, p.colour, p.size,
+                       txn.quantity_sold, txn.selling_price, txn.status || 'sale', null, null);
+          pi += 13;
+        }
+
+        if (placeholders.length > 0) {
+          const res = await client.query(
+            `INSERT INTO transactions (brand_id, transaction_date, store_id, sku, big_sku, item_name, colour, size, quantity_sold, selling_price, status, payment_method, notes)
+             VALUES ${placeholders.join(',')} RETURNING id`, values
+          );
+          results.push(...res.rows);
+        }
+      }
+
+      await auditLog(brandId, c.get('ownerId'), 'transactions_csv_imported', { created: results.length, failed: errors.length, totalRows: lines.length - 1 });
+      return c.json({ success: true, created: results.length, failed: errors.length, totalParsed: transactions.length, errors: errors.length > 0 ? errors.slice(0, 50) : undefined });
+    });
+  }
 }

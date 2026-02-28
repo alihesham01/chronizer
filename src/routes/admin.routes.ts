@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../config/database.js';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import type { Context } from 'hono';
 
 const admin = new Hono();
@@ -332,6 +333,237 @@ admin.get('/all-users', async (c) => {
   `);
 
   return c.json({ success: true, data: result.rows });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// BRAND DRILL-DOWN — view a specific brand's full data
+// ═══════════════════════════════════════════════════════════════
+
+// Get single brand details
+admin.get('/brands/:brandId', async (c) => {
+  const { brandId } = c.req.param();
+  const result = await db.query(
+    `SELECT b.*,
+           (SELECT COUNT(*) FROM brand_owners WHERE brand_id = b.id AND is_active = true) as owner_count,
+           (SELECT COUNT(*) FROM transactions WHERE brand_id = b.id) as transaction_count,
+           (SELECT COALESCE(SUM(total_amount),0) FROM transactions WHERE brand_id = b.id) as total_revenue,
+           (SELECT COUNT(*) FROM products WHERE brand_id = b.id AND is_active = true) as product_count,
+           (SELECT COUNT(*) FROM stores WHERE brand_id = b.id AND is_active = true) as store_count,
+           (SELECT COUNT(*) FROM stock_movements WHERE brand_id = b.id) as stock_move_count
+    FROM brands b WHERE b.id = $1`,
+    [brandId]
+  );
+  if (result.rows.length === 0) throw new HTTPException(404, { message: 'Brand not found' });
+  return c.json({ success: true, data: result.rows[0] });
+});
+
+// Get a brand's products
+admin.get('/brands/:brandId/products', async (c) => {
+  const { brandId } = c.req.param();
+  const result = await db.query(
+    `SELECT * FROM products WHERE brand_id = $1 ORDER BY created_at DESC LIMIT 500`,
+    [brandId]
+  );
+  return c.json({ success: true, data: result.rows });
+});
+
+// Get a brand's stores
+admin.get('/brands/:brandId/stores', async (c) => {
+  const { brandId } = c.req.param();
+  const result = await db.query(
+    `SELECT * FROM stores WHERE brand_id = $1 ORDER BY created_at DESC`,
+    [brandId]
+  );
+  return c.json({ success: true, data: result.rows });
+});
+
+// Get a brand's transactions (paginated)
+admin.get('/brands/:brandId/transactions', async (c) => {
+  const { brandId } = c.req.param();
+  const page = parseInt(c.req.query('page') || '1');
+  const limit = Math.min(parseInt(c.req.query('limit') || '50'), 200);
+  const offset = (page - 1) * limit;
+
+  const [countResult, dataResult] = await Promise.all([
+    db.query('SELECT COUNT(*) as total FROM transactions WHERE brand_id = $1', [brandId]),
+    db.query(
+      `SELECT t.*, s.name as store_name
+       FROM transactions t
+       LEFT JOIN stores s ON s.id = t.store_id
+       WHERE t.brand_id = $1
+       ORDER BY t.transaction_date DESC
+       LIMIT $2 OFFSET $3`,
+      [brandId, limit, offset]
+    )
+  ]);
+
+  return c.json({
+    success: true,
+    data: dataResult.rows,
+    pagination: {
+      page, limit,
+      total: parseInt(countResult.rows[0].total),
+      totalPages: Math.ceil(parseInt(countResult.rows[0].total) / limit)
+    }
+  });
+});
+
+// Get a brand's inventory
+admin.get('/brands/:brandId/inventory', async (c) => {
+  const { brandId } = c.req.param();
+  try {
+    const result = await db.query(
+      `SELECT * FROM inventory_view WHERE brand_id = $1 ORDER BY item_name`,
+      [brandId]
+    );
+    return c.json({ success: true, data: result.rows });
+  } catch {
+    return c.json({ success: true, data: [], message: 'Inventory view not available' });
+  }
+});
+
+// Get a brand's owners
+admin.get('/brands/:brandId/users', async (c) => {
+  const { brandId } = c.req.param();
+  const result = await db.query(
+    `SELECT id, email, first_name, last_name, role, is_active, last_login, created_at
+     FROM brand_owners WHERE brand_id = $1 ORDER BY created_at DESC`,
+    [brandId]
+  );
+  return c.json({ success: true, data: result.rows });
+});
+
+// Toggle brand active/inactive
+admin.put('/brands/:brandId/toggle', async (c) => {
+  const { brandId } = c.req.param();
+  const result = await db.query(
+    `UPDATE brands SET is_active = NOT is_active WHERE id = $1 RETURNING id, name, is_active`,
+    [brandId]
+  );
+  if (result.rows.length === 0) throw new HTTPException(404, { message: 'Brand not found' });
+  return c.json({ success: true, data: result.rows[0] });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ADMIN PASSWORD RESET — reset any user's password
+// ═══════════════════════════════════════════════════════════════
+admin.post('/reset-password', async (c) => {
+  const body = await c.req.json();
+  const { userId, newPassword } = body;
+
+  if (!userId || !newPassword) throw new HTTPException(400, { message: 'userId and newPassword required' });
+  if (newPassword.length < 8) throw new HTTPException(400, { message: 'Password must be at least 8 characters' });
+
+  const user = await db.query('SELECT id, email FROM brand_owners WHERE id = $1', [userId]);
+  if (user.rows.length === 0) throw new HTTPException(404, { message: 'User not found' });
+
+  const hash = await bcrypt.hash(newPassword, 10);
+  await db.query('UPDATE brand_owners SET password_hash = $1 WHERE id = $2', [hash, userId]);
+
+  try {
+    await db.query(
+      `INSERT INTO activity_log (owner_id, action, details) VALUES ($1, 'admin_password_reset', $2)`,
+      [c.get('ownerId'), JSON.stringify({ targetUser: user.rows[0].email })]
+    );
+  } catch { /* activity_log may not exist */ }
+
+  return c.json({ success: true, message: `Password reset for ${user.rows[0].email}` });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ACTIVITY LOG — audit trail viewer
+// ═══════════════════════════════════════════════════════════════
+admin.get('/activity-log', async (c) => {
+  const page = parseInt(c.req.query('page') || '1');
+  const limit = Math.min(parseInt(c.req.query('limit') || '50'), 200);
+  const offset = (page - 1) * limit;
+
+  try {
+    const [countResult, dataResult] = await Promise.all([
+      db.query('SELECT COUNT(*) as total FROM activity_log'),
+      db.query(
+        `SELECT al.*, bo.email, bo.first_name, bo.last_name, b.name as brand_name
+         FROM activity_log al
+         LEFT JOIN brand_owners bo ON bo.id = al.owner_id
+         LEFT JOIN brands b ON b.id = al.brand_id
+         ORDER BY al.created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      )
+    ]);
+
+    return c.json({
+      success: true,
+      data: dataResult.rows,
+      pagination: {
+        page, limit,
+        total: parseInt(countResult.rows[0].total),
+        totalPages: Math.ceil(parseInt(countResult.rows[0].total) / limit)
+      }
+    });
+  } catch {
+    return c.json({ success: true, data: [], pagination: { page: 1, limit, total: 0, totalPages: 0 } });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// DATA INTEGRITY CHECK — verify DB consistency
+// ═══════════════════════════════════════════════════════════════
+admin.get('/integrity-check', async (c) => {
+  const issues: string[] = [];
+
+  // 1. Orphaned transactions (brand_id doesn't exist)
+  const orphanTxn = await db.query(
+    `SELECT COUNT(*) as c FROM transactions t LEFT JOIN brands b ON b.id = t.brand_id WHERE b.id IS NULL`
+  );
+  if (parseInt(orphanTxn.rows[0].c) > 0) issues.push(`${orphanTxn.rows[0].c} orphaned transactions (missing brand)`);
+
+  // 2. Orphaned products
+  const orphanProd = await db.query(
+    `SELECT COUNT(*) as c FROM products p LEFT JOIN brands b ON b.id = p.brand_id WHERE b.id IS NULL`
+  );
+  if (parseInt(orphanProd.rows[0].c) > 0) issues.push(`${orphanProd.rows[0].c} orphaned products (missing brand)`);
+
+  // 3. Orphaned stores
+  const orphanStore = await db.query(
+    `SELECT COUNT(*) as c FROM stores s LEFT JOIN brands b ON b.id = s.brand_id WHERE b.id IS NULL`
+  );
+  if (parseInt(orphanStore.rows[0].c) > 0) issues.push(`${orphanStore.rows[0].c} orphaned stores (missing brand)`);
+
+  // 4. Transactions referencing non-existent stores
+  const badStoreTxn = await db.query(
+    `SELECT COUNT(*) as c FROM transactions t WHERE t.store_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM stores s WHERE s.id = t.store_id)`
+  );
+  if (parseInt(badStoreTxn.rows[0].c) > 0) issues.push(`${badStoreTxn.rows[0].c} transactions referencing deleted stores`);
+
+  // 5. Brand owners with no brand
+  const orphanOwners = await db.query(
+    `SELECT COUNT(*) as c FROM brand_owners bo LEFT JOIN brands b ON b.id = bo.brand_id WHERE b.id IS NULL`
+  );
+  if (parseInt(orphanOwners.rows[0].c) > 0) issues.push(`${orphanOwners.rows[0].c} orphaned brand owners (missing brand)`);
+
+  // 6. Duplicate SKUs within same brand
+  const dupSkus = await db.query(
+    `SELECT brand_id, sku, COUNT(*) as c FROM products GROUP BY brand_id, sku HAVING COUNT(*) > 1`
+  );
+  if (dupSkus.rows.length > 0) issues.push(`${dupSkus.rows.length} duplicate SKU entries across brands`);
+
+  // 7. DB size + table counts
+  const dbSize = await db.query(`SELECT pg_size_pretty(pg_database_size(current_database())) as size`);
+  const tableCounts = await db.query(
+    `SELECT relname as name, n_live_tup as rows FROM pg_stat_user_tables ORDER BY n_live_tup DESC`
+  );
+
+  return c.json({
+    success: true,
+    data: {
+      healthy: issues.length === 0,
+      issues,
+      dbSize: dbSize.rows[0].size,
+      tables: tableCounts.rows,
+      checkedAt: new Date().toISOString()
+    }
+  });
 });
 
 export { admin as adminRoutes };

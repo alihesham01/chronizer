@@ -107,6 +107,22 @@ export default function AdminDashboard() {
 
         {/* Quick Nav */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+          <Link href="/admin/brands">
+            <Card className="hover:shadow-md transition-shadow cursor-pointer border-purple-200 bg-purple-50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg text-purple-700">Brand Management</CardTitle>
+                <CardDescription>View all brands, drill into their data</CardDescription>
+              </CardHeader>
+            </Card>
+          </Link>
+          <Link href="/admin/users">
+            <Card className="hover:shadow-md transition-shadow cursor-pointer border-indigo-200 bg-indigo-50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg text-indigo-700">All Users</CardTitle>
+                <CardDescription>Manage users, reset passwords</CardDescription>
+              </CardHeader>
+            </Card>
+          </Link>
           <Link href="/admin/invite-codes">
             <Card className="hover:shadow-md transition-shadow cursor-pointer border-blue-200 bg-blue-50">
               <CardHeader className="pb-2">
@@ -115,19 +131,27 @@ export default function AdminDashboard() {
               </CardHeader>
             </Card>
           </Link>
+          <Link href="/admin/activity-log">
+            <Card className="hover:shadow-md transition-shadow cursor-pointer border-amber-200 bg-amber-50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg text-amber-700">Activity Log</CardTitle>
+                <CardDescription>Full audit trail of all actions</CardDescription>
+              </CardHeader>
+            </Card>
+          </Link>
+          <Link href="/admin/integrity">
+            <Card className="hover:shadow-md transition-shadow cursor-pointer border-red-200 bg-red-50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg text-red-700">Data Integrity</CardTitle>
+                <CardDescription>Check for orphaned data, duplicates, DB health</CardDescription>
+              </CardHeader>
+            </Card>
+          </Link>
           <Link href="/admin/system">
             <Card className="hover:shadow-md transition-shadow cursor-pointer border-green-200 bg-green-50">
               <CardHeader className="pb-2">
                 <CardTitle className="text-lg text-green-700">System Status</CardTitle>
                 <CardDescription>Server health, database stats, and performance</CardDescription>
-              </CardHeader>
-            </Card>
-          </Link>
-          <Link href="/admin/brands">
-            <Card className="hover:shadow-md transition-shadow cursor-pointer border-purple-200 bg-purple-50">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-lg text-purple-700">Brand Management</CardTitle>
-                <CardDescription>View all registered brands and their activity</CardDescription>
               </CardHeader>
             </Card>
           </Link>

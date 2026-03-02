@@ -141,7 +141,24 @@ CREATE INDEX IF NOT EXISTS idx_sm_brand_date ON stock_movements (brand_id, move_
 CREATE INDEX IF NOT EXISTS idx_sm_brand_sku ON stock_movements (brand_id, sku);
 CREATE INDEX IF NOT EXISTS idx_sm_brand_store ON stock_movements (brand_id, store_id);
 
--- 7. MATERIALIZED VIEW for fast daily analytics (per-brand)
+-- 7. SCRAPE JOBS (tracking table for scraper runs)
+CREATE TABLE IF NOT EXISTS scrape_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    brand_id UUID NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
+    group_name VARCHAR(100) NOT NULL,
+    job_type VARCHAR(20) NOT NULL CHECK (job_type IN ('initial', 'daily', 'manual')),
+    status VARCHAR(20) NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'success', 'failed')),
+    transactions_inserted INTEGER DEFAULT 0,
+    inventory_items INTEGER DEFAULT 0,
+    error_message TEXT,
+    started_at TIMESTAMPTZ DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    triggered_by VARCHAR(50) DEFAULT 'scheduler'
+);
+CREATE INDEX IF NOT EXISTS idx_scrape_jobs_brand ON scrape_jobs (brand_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_scrape_jobs_status ON scrape_jobs (brand_id, status);
+
+-- 8. MATERIALIZED VIEW for fast daily analytics (per-brand)
 DROP MATERIALIZED VIEW IF EXISTS daily_transaction_summary;
 CREATE MATERIALIZED VIEW daily_transaction_summary AS
 SELECT
@@ -158,10 +175,13 @@ GROUP BY brand_id, date_trunc('day', transaction_date), store_id;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_summary_unique
     ON daily_transaction_summary (brand_id, day, store_id);
 
--- 8. INVENTORY VIEW (computed, per-brand)
-CREATE OR REPLACE VIEW inventory_view AS
+-- 8b. INVENTORY SUMMARY (materialized — refreshed hourly by worker)
+-- Replaces the old inventory_view which used slow LATERAL subqueries.
+DROP MATERIALIZED VIEW IF EXISTS inventory_summary;
+CREATE MATERIALIZED VIEW inventory_summary AS
 SELECT
     p.brand_id,
+    p.id AS product_id,
     p.sku,
     p.big_sku,
     p.name AS item_name,
@@ -169,24 +189,34 @@ SELECT
     p.size,
     p.cost_price,
     p.selling_price AS unit_selling_price,
-    COALESCE(sm_in.qty, 0) AS total_stock_in,
-    COALESCE(sm_out.qty, 0) AS total_stock_out,
-    COALESCE(tx_sold.qty, 0) AS total_sold,
-    COALESCE(sm_in.qty, 0) - COALESCE(sm_out.qty, 0) - COALESCE(tx_sold.qty, 0) AS available_stock
+    COALESCE(sm.total_in, 0) AS total_stock_in,
+    COALESCE(sm.total_out, 0) AS total_stock_out,
+    COALESCE(tx.total_sold, 0) AS total_sold,
+    COALESCE(sm.total_in, 0) - COALESCE(sm.total_out, 0) - COALESCE(tx.total_sold, 0) AS available_stock
 FROM products p
-LEFT JOIN LATERAL (
-    SELECT SUM(quantity) AS qty FROM stock_movements
-    WHERE brand_id = p.brand_id AND sku = p.sku AND quantity > 0
-) sm_in ON true
-LEFT JOIN LATERAL (
-    SELECT SUM(ABS(quantity)) AS qty FROM stock_movements
-    WHERE brand_id = p.brand_id AND sku = p.sku AND quantity < 0
-) sm_out ON true
-LEFT JOIN LATERAL (
-    SELECT SUM(quantity_sold) AS qty FROM transactions
-    WHERE brand_id = p.brand_id AND sku = p.sku AND status = 'sale'
-) tx_sold ON true
+LEFT JOIN (
+    SELECT brand_id, sku,
+           SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END) AS total_in,
+           SUM(CASE WHEN quantity < 0 THEN ABS(quantity) ELSE 0 END) AS total_out
+    FROM stock_movements
+    GROUP BY brand_id, sku
+) sm ON sm.brand_id = p.brand_id AND sm.sku = p.sku
+LEFT JOIN (
+    SELECT brand_id, sku, SUM(quantity_sold) AS total_sold
+    FROM transactions
+    WHERE status = 'sale'
+    GROUP BY brand_id, sku
+) tx ON tx.brand_id = p.brand_id AND tx.sku = p.sku
 WHERE p.is_active = true;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_summary_unique
+    ON inventory_summary (brand_id, sku);
+CREATE INDEX IF NOT EXISTS idx_inventory_summary_brand
+    ON inventory_summary (brand_id);
+
+-- Backwards-compatible view name for existing queries
+DROP VIEW IF EXISTS inventory_view;
+CREATE OR REPLACE VIEW inventory_view AS SELECT * FROM inventory_summary;
 
 -- 9. Helper function for tenant context (used by RLS if enabled)
 CREATE OR REPLACE FUNCTION set_brand_context(p_brand_id UUID)
@@ -299,8 +329,11 @@ async function setupDatabase() {
     const productCount = await sql`SELECT COUNT(*) AS c FROM products WHERE brand_id = ${brandId}`;
     console.log(`      ${storeCount[0].c} stores, ${productCount[0].c} products\n`);
 
-    // Refresh materialized view
+    // Refresh materialized views
     await sql`REFRESH MATERIALIZED VIEW CONCURRENTLY daily_transaction_summary`;
+    try { await sql`REFRESH MATERIALIZED VIEW CONCURRENTLY inventory_summary`; } catch {
+      try { await sql`REFRESH MATERIALIZED VIEW inventory_summary`; } catch {}
+    }
 
     console.log('=== Setup complete ===');
     console.log('Login: demo@wokeportal.com / demo123\n');

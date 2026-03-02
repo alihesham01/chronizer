@@ -28,6 +28,8 @@ import { adminRoutes } from './routes/admin.routes.js';
 import { skuMapRoutes } from './routes/sku-map.routes.js';
 import { unmappedSkusRoutes } from './routes/unmapped-skus.routes.js';
 import { notificationsRoutes } from './routes/notifications.routes.js';
+import { scraperRoutes } from './routes/scrapers.routes.js';
+// Scheduler moved to worker process (src/worker.ts)
 
 // Middleware
 import { errorHandler } from './middleware/error.js';
@@ -35,8 +37,9 @@ import { rateLimit } from './middleware/rate-limit.js';
 import { securityHeaders } from './middleware/security.js';
 import { logger } from './lib/logger.js';
 
-// In-memory cache (lightweight, no Redis needed)
+// Redis-backed cache (shared across instances)
 import { memoryCache } from './services/memory-cache.js';
+import { closeRedis, getRedis } from './config/redis.js';
 
 // JWT verification for extracting brand context
 import jwt from 'jsonwebtoken';
@@ -92,10 +95,11 @@ app.use('/api/*', async (c, next) => {
     return;
   }
 
+  // Admin routes have their own auth check, but still need token parsing
   const authHeader = c.req.header('authorization');
   if (!authHeader?.startsWith('Bearer ')) {
-    await next();
-    return;
+    // No token on a non-public route → reject
+    return c.json({ success: false, error: 'Authentication required' }, 401);
   }
 
   try {
@@ -165,7 +169,8 @@ app.get('/api/health', async (c) => {
       version: '2.0.0',
       services: {
         database: dbResult.rows.length > 0 ? 'connected' : 'disconnected',
-        cache: 'in-memory'
+        cache: 'redis',
+        redis: await getRedis().ping() === 'PONG' ? 'connected' : 'disconnected'
       }
     });
   } catch (error: any) {
@@ -196,13 +201,18 @@ app.route('/api/admin', adminRoutes);
 app.route('/api/sku-map', skuMapRoutes);
 app.route('/api/unmapped-skus', unmappedSkusRoutes);
 app.route('/api/notifications', notificationsRoutes);
+app.route('/api/scrapers', scraperRoutes);
 
-// ── Cache stats (in-memory) ──
+// ── Cache stats (in-memory) — require authentication ──
 app.get('/api/cache/stats', (c) => {
+  const ownerId = c.get('ownerId');
+  if (!ownerId) return c.json({ success: false, error: 'Authentication required' }, 401);
   return c.json(memoryCache.getStats());
 });
 
 app.post('/api/cache/clear', (c) => {
+  const ownerId = c.get('ownerId');
+  if (!ownerId) return c.json({ success: false, error: 'Authentication required' }, 401);
   memoryCache.clear();
   return c.json({ message: 'Cache cleared' });
 });
@@ -217,14 +227,17 @@ serve({
 }, (info) => {
   logger.info(`Server running at http://localhost:${info.port}`);
   logger.info(`Health: http://localhost:${info.port}/api/health`);
+
+  logger.info('Scraper scheduler runs in separate worker process (src/worker.ts)');
 });
 
 // ── Graceful shutdown ──
 const shutdown = async () => {
   logger.info('Shutting down...');
   try {
+    await closeRedis();
     await db.end();
-    logger.info('Database pool closed');
+    logger.info('Database pool and Redis closed');
   } catch (error) {
     logger.error('Shutdown error:', error);
   }

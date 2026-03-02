@@ -1,202 +1,137 @@
 import { logger } from '../lib/logger.js';
+import { getRedis } from '../config/redis.js';
 
-interface CacheItem {
-  value: any;
-  expiry: number;
-  hits: number;
-}
+/**
+ * Redis-backed cache that replaces the old 1,000-item in-memory cache.
+ * - No size limit (Redis manages memory via maxmemory / eviction policy)
+ * - Shared across all server instances (no stale-data problem)
+ * - Same async interface so callers don't need to change
+ */
+class RedisCache {
+  private prefix = 'cache:';
+  private stats = { hits: 0, misses: 0, sets: 0, deletes: 0 };
 
-const MAX_CACHE_SIZE = 1000;
-
-class MemoryCache {
-  private cache: Map<string, CacheItem> = new Map();
-  private stats = {
-    hits: 0,
-    misses: 0,
-    sets: 0,
-    deletes: 0,
-    evictions: 0
-  };
+  private k(key: string) { return this.prefix + key; }
 
   async get(key: string): Promise<any | null> {
-    const item = this.cache.get(key);
-    
-    if (!item) {
+    try {
+      const raw = await getRedis().get(this.k(key));
+      if (raw === null) { this.stats.misses++; return null; }
+      this.stats.hits++;
+      return JSON.parse(raw);
+    } catch (err: any) {
+      logger.error('[Cache] get error:', err.message);
       this.stats.misses++;
       return null;
     }
-    
-    if (Date.now() > item.expiry) {
-      this.cache.delete(key);
-      this.stats.misses++;
-      return null;
-    }
-    
-    item.hits++;
-    this.stats.hits++;
-    return item.value;
   }
 
   async set(key: string, value: any, ttlSeconds: number = 300): Promise<void> {
-    // LRU eviction: if at capacity, remove the least-recently-hit entry
-    if (this.cache.size >= MAX_CACHE_SIZE && !this.cache.has(key)) {
-      this.evictLRU();
-    }
-
-    const expiry = Date.now() + (ttlSeconds * 1000);
-    
-    this.cache.set(key, {
-      value,
-      expiry,
-      hits: 0
-    });
-    
-    this.stats.sets++;
-  }
-
-  private evictLRU(): void {
-    let lruKey: string | null = null;
-    let lruHits = Infinity;
-
-    for (const [key, item] of this.cache.entries()) {
-      // Prefer expired items first
-      if (Date.now() > item.expiry) {
-        this.cache.delete(key);
-        this.stats.evictions++;
-        return;
-      }
-      if (item.hits < lruHits) {
-        lruHits = item.hits;
-        lruKey = key;
-      }
-    }
-
-    if (lruKey) {
-      this.cache.delete(lruKey);
-      this.stats.evictions++;
+    try {
+      await getRedis().set(this.k(key), JSON.stringify(value), 'EX', ttlSeconds);
+      this.stats.sets++;
+    } catch (err: any) {
+      logger.error('[Cache] set error:', err.message);
     }
   }
 
   async del(key: string): Promise<boolean> {
-    const deleted = this.cache.delete(key);
-    if (deleted) {
-      this.stats.deletes++;
+    try {
+      const result = await getRedis().del(this.k(key));
+      if (result > 0) this.stats.deletes++;
+      return result > 0;
+    } catch (err: any) {
+      logger.error('[Cache] del error:', err.message);
+      return false;
     }
-    return deleted;
   }
 
   async exists(key: string): Promise<boolean> {
-    const item = this.cache.get(key);
-    
-    if (!item) {
-      return false;
-    }
-    
-    if (Date.now() > item.expiry) {
-      this.cache.delete(key);
-      return false;
-    }
-    
-    return true;
+    try {
+      return (await getRedis().exists(this.k(key))) === 1;
+    } catch { return false; }
   }
 
   async clear(): Promise<void> {
-    const size = this.cache.size;
-    this.cache.clear();
-    logger.info(`Cleared ${size} items from memory cache`);
+    try {
+      const redis = getRedis();
+      let cursor = '0';
+      let totalDeleted = 0;
+      do {
+        const [next, keys] = await redis.scan(cursor, 'MATCH', this.prefix + '*', 'COUNT', 200);
+        cursor = next;
+        if (keys.length > 0) {
+          await redis.del(...keys);
+          totalDeleted += keys.length;
+        }
+      } while (cursor !== '0');
+      logger.info(`[Cache] Cleared ${totalDeleted} items`);
+    } catch (err: any) {
+      logger.error('[Cache] clear error:', err.message);
+    }
   }
 
   async ttl(key: string): Promise<number> {
-    const item = this.cache.get(key);
-    
-    if (!item) {
-      return -1;
-    }
-    
-    const remaining = Math.ceil((item.expiry - Date.now()) / 1000);
-    return remaining > 0 ? remaining : -1;
+    try {
+      return await getRedis().ttl(this.k(key));
+    } catch { return -1; }
   }
 
-  // Get multiple keys
   async mget(keys: string[]): Promise<Array<any | null>> {
-    return Promise.all(keys.map(key => this.get(key)));
+    if (keys.length === 0) return [];
+    try {
+      const rKeys = keys.map(k => this.k(k));
+      const results = await getRedis().mget(...rKeys);
+      return results.map(r => {
+        if (r === null) { this.stats.misses++; return null; }
+        this.stats.hits++;
+        return JSON.parse(r);
+      });
+    } catch { return keys.map(() => null); }
   }
 
-  // Set multiple keys
   async mset(entries: Array<{ key: string; value: any; ttl?: number }>): Promise<void> {
-    await Promise.all(
-      entries.map(entry => this.set(entry.key, entry.value, entry.ttl))
-    );
-  }
-
-  // Get all matching keys
-  async keys(pattern: string): Promise<string[]> {
-    const regex = new RegExp(pattern.replace(/\*/g, '.*'));
-    return Array.from(this.cache.keys()).filter(key => regex.test(key));
-  }
-
-  // Clean up expired entries
-  cleanup(): number {
-    const now = Date.now();
-    let cleaned = 0;
-    
-    for (const [key, item] of this.cache.entries()) {
-      if (now > item.expiry) {
-        this.cache.delete(key);
-        cleaned++;
+    try {
+      const pipeline = getRedis().pipeline();
+      for (const e of entries) {
+        pipeline.set(this.k(e.key), JSON.stringify(e.value), 'EX', e.ttl || 300);
       }
+      await pipeline.exec();
+      this.stats.sets += entries.length;
+    } catch (err: any) {
+      logger.error('[Cache] mset error:', err.message);
     }
-    
-    if (cleaned > 0) {
-      logger.info(`Cleaned up ${cleaned} expired cache entries`);
-    }
-    
-    return cleaned;
   }
 
-  // Get cache statistics
+  async keys(pattern: string): Promise<string[]> {
+    try {
+      const redisPattern = this.prefix + pattern.replace(/\*/g, '*');
+      const redis = getRedis();
+      const allKeys: string[] = [];
+      let cursor = '0';
+      do {
+        const [next, keys] = await redis.scan(cursor, 'MATCH', redisPattern, 'COUNT', 200);
+        cursor = next;
+        allKeys.push(...keys.map(k => k.slice(this.prefix.length)));
+      } while (cursor !== '0');
+      return allKeys;
+    } catch { return []; }
+  }
+
   getStats(): any {
-    const hitRate = this.stats.hits + this.stats.misses > 0
-      ? (this.stats.hits / (this.stats.hits + this.stats.misses)) * 100
-      : 0;
-    
+    const total = this.stats.hits + this.stats.misses;
+    const hitRate = total > 0 ? (this.stats.hits / total) * 100 : 0;
     return {
       ...this.stats,
-      size: this.cache.size,
       hitRate: Math.round(hitRate * 100) / 100,
-      memoryUsage: this.getMemoryUsage()
+      backend: 'redis',
     };
   }
 
-  // Estimate memory usage
-  private getMemoryUsage(): string {
-    let totalSize = 0;
-    for (const [key, item] of this.cache.entries()) {
-      totalSize += key.length * 2; // UTF-16
-      totalSize += JSON.stringify(item.value).length * 2;
-    }
-    
-    if (totalSize < 1024) {
-      return `${totalSize} bytes`;
-    } else if (totalSize < 1024 * 1024) {
-      return `${Math.round(totalSize / 1024)} KB`;
-    } else {
-      return `${Math.round(totalSize / (1024 * 1024))} MB`;
-    }
-  }
-
-  // Get top keys by hit count
-  getTopKeys(limit: number = 10): Array<{ key: string; hits: number }> {
-    return Array.from(this.cache.entries())
-      .map(([key, item]) => ({ key, hits: item.hits }))
-      .sort((a, b) => b.hits - a.hits)
-      .slice(0, limit);
+  getTopKeys(_limit: number = 10): Array<{ key: string; hits: number }> {
+    // Redis doesn't track per-key hits; return empty for compatibility
+    return [];
   }
 }
 
-export const memoryCache = new MemoryCache();
-
-// Auto cleanup every 5 minutes
-setInterval(() => {
-  memoryCache.cleanup();
-}, 5 * 60 * 1000);
+export const memoryCache = new RedisCache();

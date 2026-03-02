@@ -1,4 +1,4 @@
-import { db } from '../config/database.js';
+import { db, brandQuery } from '../config/database.js';
 import { memoryCache } from './memory-cache.js';
 
 class AnalyticsService {
@@ -13,7 +13,7 @@ class AnalyticsService {
     if (endDate) { where += ` AND t.transaction_date <= $${pi}::date`; params.push(endDate); pi++; }
     if (storeName) { where += ` AND s.name = $${pi}`; params.push(storeName); pi++; }
 
-    const result = await db.query(`
+    const result = await brandQuery(brandId, `
       SELECT t.transaction_date::date AS date, s.name AS store_name,
              COUNT(*) AS transactions, SUM(t.quantity_sold) AS total_qty,
              SUM(t.quantity_sold * t.selling_price) AS revenue
@@ -25,7 +25,7 @@ class AnalyticsService {
   }
 
   async getSKUPerformance(brandId: string, limit = 50) {
-    const result = await db.query(`
+    const result = await brandQuery(brandId, `
       SELECT sku, item_name, SUM(quantity_sold) AS total_qty,
              SUM(quantity_sold * selling_price) AS total_revenue,
              COUNT(*) AS transaction_count
@@ -35,7 +35,7 @@ class AnalyticsService {
   }
 
   async getStorePerformance(brandId: string) {
-    const result = await db.query(`
+    const result = await brandQuery(brandId, `
       SELECT s.name AS store_name, COUNT(*) AS transactions,
              SUM(t.quantity_sold * t.selling_price) AS revenue,
              SUM(t.quantity_sold) AS total_qty
@@ -46,7 +46,7 @@ class AnalyticsService {
   }
 
   async getMonthlyRevenue(brandId: string, months = 12) {
-    const result = await db.query(`
+    const result = await brandQuery(brandId, `
       SELECT date_trunc('month', transaction_date)::date AS month,
              COUNT(*) AS transactions, SUM(quantity_sold * selling_price) AS revenue
       FROM transactions WHERE brand_id = $1
@@ -55,7 +55,7 @@ class AnalyticsService {
   }
 
   async getTopSKUs(brandId: string, limit = 20) {
-    const result = await db.query(`
+    const result = await brandQuery(brandId, `
       SELECT sku, item_name, SUM(quantity_sold) AS total_qty,
              SUM(quantity_sold * selling_price) AS revenue
       FROM transactions WHERE brand_id = $1 AND transaction_date >= CURRENT_DATE - INTERVAL '30 days'
@@ -65,11 +65,11 @@ class AnalyticsService {
 
   async getDashboardMetrics(brandId: string) {
     const [today, yesterday, month] = await Promise.all([
-      db.query(`SELECT COUNT(*) AS txn, COALESCE(SUM(quantity_sold * selling_price),0) AS rev
+      brandQuery(brandId, `SELECT COUNT(*) AS txn, COALESCE(SUM(quantity_sold * selling_price),0) AS rev
                 FROM transactions WHERE brand_id = $1 AND transaction_date::date = CURRENT_DATE`, [brandId]),
-      db.query(`SELECT COUNT(*) AS txn, COALESCE(SUM(quantity_sold * selling_price),0) AS rev
+      brandQuery(brandId, `SELECT COUNT(*) AS txn, COALESCE(SUM(quantity_sold * selling_price),0) AS rev
                 FROM transactions WHERE brand_id = $1 AND transaction_date::date = CURRENT_DATE - 1`, [brandId]),
-      db.query(`SELECT COUNT(*) AS txn, COALESCE(SUM(quantity_sold * selling_price),0) AS rev,
+      brandQuery(brandId, `SELECT COUNT(*) AS txn, COALESCE(SUM(quantity_sold * selling_price),0) AS rev,
                        COUNT(DISTINCT store_id) AS stores, COUNT(DISTINCT sku) AS skus
                 FROM transactions WHERE brand_id = $1 AND transaction_date >= date_trunc('month', CURRENT_DATE)`, [brandId])
     ]);
@@ -77,7 +77,7 @@ class AnalyticsService {
   }
 
   async getSalesTrends(brandId: string) {
-    const result = await db.query(`
+    const result = await brandQuery(brandId, `
       SELECT transaction_date::date AS date, COUNT(*) AS transactions,
              SUM(quantity_sold * selling_price) AS revenue, SUM(quantity_sold) AS qty
       FROM transactions WHERE brand_id = $1 AND transaction_date >= CURRENT_DATE - INTERVAL '7 days'
@@ -86,7 +86,7 @@ class AnalyticsService {
   }
 
   async getAnalyticsSummary(brandId: string) {
-    const result = await db.query(`
+    const result = await brandQuery(brandId, `
       SELECT COUNT(*) AS total_transactions,
              COALESCE(SUM(quantity_sold * selling_price),0) AS total_revenue,
              COALESCE(AVG(selling_price),0) AS avg_price,
@@ -99,12 +99,20 @@ class AnalyticsService {
   }
 
   async refreshViews() {
+    const results: Record<string, string> = {};
     try {
       await db.query('REFRESH MATERIALIZED VIEW CONCURRENTLY daily_transaction_summary');
-      return { success: true, refreshed_at: new Date().toISOString() };
+      results.daily_transaction_summary = 'refreshed';
     } catch {
-      return { success: false, message: 'Materialized view may not exist yet' };
+      results.daily_transaction_summary = 'failed or does not exist';
     }
+    try {
+      await db.query('REFRESH MATERIALIZED VIEW CONCURRENTLY inventory_summary');
+      results.inventory_summary = 'refreshed';
+    } catch {
+      results.inventory_summary = 'failed or does not exist';
+    }
+    return { success: true, refreshed_at: new Date().toISOString(), views: results };
   }
 }
 

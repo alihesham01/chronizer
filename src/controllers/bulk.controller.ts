@@ -1,6 +1,6 @@
 import { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { withTransaction } from '../config/database.js';
+import { withBrandTransaction } from '../config/database.js';
 import { getBrandId } from '../lib/brand-context.js';
 
 export class BulkController {
@@ -15,7 +15,7 @@ export class BulkController {
       throw new HTTPException(400, { message: 'Max 100,000 per request' });
     }
 
-    return await withTransaction(async (client) => {
+    return await withBrandTransaction(brandId, async (client) => {
       let processedCount = 0;
       const errors: any[] = [];
 

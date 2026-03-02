@@ -135,6 +135,21 @@ class StoresAPI {
       body: JSON.stringify({ stores }),
     });
   }
+
+  // Save portal credentials for a store chain
+  async savePortalCredentials(groupName: string, portalEmail: string, portalPassword: string): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>('/api/scrapers/credentials', {
+      method: 'POST',
+      body: JSON.stringify({ group_name: groupName, portal_email: portalEmail, portal_password: portalPassword }),
+    });
+  }
+
+  // Trigger initial scrape for a store chain (fetches all transactions)
+  async triggerInitialScrape(groupName: string): Promise<{ success: boolean; data?: { transactions_inserted: number; inventory_items: number } }> {
+    return this.request('/api/scrapers/scrape/initial/' + encodeURIComponent(groupName), {
+      method: 'POST',
+    });
+  }
 }
 
 export const storesApi = new StoresAPI();

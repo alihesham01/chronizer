@@ -1,6 +1,6 @@
 import { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { db, withTransaction } from '../config/database.js';
+import { brandQuery, withBrandTransaction } from '../config/database.js';
 import { getBrandId } from '../lib/brand-context.js';
 import { auditLog } from '../lib/audit.js';
 
@@ -20,8 +20,8 @@ export class ProductsController {
     if (category) { where += ` AND category = $${pi}`; params.push(category); pi++; }
 
     const [countRes, dataRes] = await Promise.all([
-      db.query(`SELECT COUNT(*) FROM products ${where}`, params),
-      db.query(`SELECT * FROM products ${where} ORDER BY created_at DESC LIMIT $${pi} OFFSET $${pi+1}`, [...params, limitNum, offset])
+      brandQuery(brandId, `SELECT COUNT(*) FROM products ${where}`, params),
+      brandQuery(brandId, `SELECT * FROM products ${where} ORDER BY created_at DESC LIMIT $${pi} OFFSET $${pi+1}`, [...params, limitNum, offset])
     ]);
 
     const total = parseInt(countRes.rows[0].count);
@@ -35,7 +35,7 @@ export class ProductsController {
   static async getProduct(c: Context) {
     const brandId = getBrandId(c);
     const { id } = c.req.param();
-    const result = await db.query('SELECT * FROM products WHERE id = $1 AND brand_id = $2', [id, brandId]);
+    const result = await brandQuery(brandId, 'SELECT * FROM products WHERE id = $1 AND brand_id = $2', [id, brandId]);
     if (result.rows.length === 0) throw new HTTPException(404, { message: 'Product not found' });
     return c.json({ success: true, data: result.rows[0] });
   }
@@ -47,10 +47,10 @@ export class ProductsController {
 
     if (!sku || !name) throw new HTTPException(400, { message: 'SKU and name are required' });
 
-    const existing = await db.query('SELECT id FROM products WHERE brand_id = $1 AND sku = $2', [brandId, sku]);
+    const existing = await brandQuery(brandId, 'SELECT id FROM products WHERE brand_id = $1 AND sku = $2', [brandId, sku]);
     if (existing.rows.length > 0) throw new HTTPException(409, { message: 'SKU already exists for this brand' });
 
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `INSERT INTO products (brand_id, sku, big_sku, name, colour, size, category, cost_price, selling_price)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
       [brandId, sku, big_sku, name, colour, size, category, cost_price, selling_price]
@@ -64,7 +64,7 @@ export class ProductsController {
     const { id } = c.req.param();
     const body = await c.req.json();
 
-    const existing = await db.query('SELECT id FROM products WHERE id = $1 AND brand_id = $2', [id, brandId]);
+    const existing = await brandQuery(brandId, 'SELECT id FROM products WHERE id = $1 AND brand_id = $2', [id, brandId]);
     if (existing.rows.length === 0) throw new HTTPException(404, { message: 'Product not found' });
 
     const allowed = ['sku','big_sku','name','colour','size','category','cost_price','selling_price','is_active'];
@@ -78,7 +78,7 @@ export class ProductsController {
     if (sets.length === 0) throw new HTTPException(400, { message: 'No valid fields to update' });
 
     params.push(id, brandId);
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `UPDATE products SET ${sets.join(', ')} WHERE id = $${pi} AND brand_id = $${pi+1} RETURNING *`, params
     );
     await auditLog(brandId, c.get('ownerId'), 'product_updated', { id });
@@ -89,7 +89,7 @@ export class ProductsController {
     const brandId = getBrandId(c);
     const { id } = c.req.param();
     // Soft delete: deactivate instead of removing
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       'UPDATE products SET is_active = false WHERE id = $1 AND brand_id = $2 AND is_active = true RETURNING id',
       [id, brandId]
     );
@@ -104,7 +104,7 @@ export class ProductsController {
     if (!Array.isArray(products) || products.length === 0) throw new HTTPException(400, { message: 'products array required' });
     if (products.length > 5000) throw new HTTPException(400, { message: 'Max 5000 products per batch' });
 
-    return await withTransaction(async (client) => {
+    return await withBrandTransaction(brandId, async (client) => {
       const results: any[] = [];
       const errors: any[] = [];
 

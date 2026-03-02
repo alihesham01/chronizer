@@ -1,6 +1,6 @@
 import { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { db } from '../config/database.js';
+import { db, brandQuery } from '../config/database.js';
 import { getBrandId } from '../lib/brand-context.js';
 
 export class BrandController {
@@ -19,7 +19,7 @@ export class BrandController {
     const brandId = getBrandId(c);
     const body = await c.req.json();
 
-    const allowed: Record<string, string> = { name: 'name', logoUrl: 'logo_url', primaryColor: 'primary_color', secondaryColor: 'secondary_color', settings: 'settings' };
+    const allowed: Record<string, string> = { name: 'name', logoUrl: 'logo_url', primaryColor: 'primary_color', secondaryColor: 'secondary_color', settings: 'settings', timezone: 'timezone', currency: 'currency', currencySymbol: 'currency_symbol' };
     const sets: string[] = [];
     const params: any[] = [];
     let pi = 1;
@@ -53,7 +53,7 @@ export class BrandController {
     if (match) days = parseInt(match[1]);
 
     const [summary, topProducts, topStores] = await Promise.all([
-      db.query(
+      brandQuery(brandId,
         `SELECT
            COUNT(*) AS total_transactions,
            COALESCE(SUM(quantity_sold * selling_price), 0) AS total_revenue,
@@ -64,13 +64,13 @@ export class BrandController {
          WHERE brand_id = $1 AND transaction_date >= NOW() - ($2 || ' days')::interval`,
         [brandId, days]
       ),
-      db.query(
+      brandQuery(brandId,
         `SELECT sku, item_name, SUM(quantity_sold) AS total_qty, SUM(quantity_sold * selling_price) AS total_revenue
          FROM transactions WHERE brand_id = $1 AND transaction_date >= NOW() - ($2 || ' days')::interval
          GROUP BY sku, item_name ORDER BY total_revenue DESC LIMIT 10`,
         [brandId, days]
       ),
-      db.query(
+      brandQuery(brandId,
         `SELECT s.name AS store_name, COUNT(*) AS txn_count, SUM(t.quantity_sold * t.selling_price) AS revenue
          FROM transactions t JOIN stores s ON t.store_id = s.id
          WHERE t.brand_id = $1 AND t.transaction_date >= NOW() - ($2 || ' days')::interval
@@ -94,18 +94,18 @@ export class BrandController {
     const brandId = getBrandId(c);
 
     const [today, month, storeCount, productCount] = await Promise.all([
-      db.query(
+      brandQuery(brandId,
         `SELECT COUNT(*) AS txn_count, COALESCE(SUM(quantity_sold * selling_price), 0) AS revenue
          FROM transactions WHERE brand_id = $1 AND transaction_date::date = CURRENT_DATE`,
         [brandId]
       ),
-      db.query(
+      brandQuery(brandId,
         `SELECT COUNT(*) AS txn_count, COALESCE(SUM(quantity_sold * selling_price), 0) AS revenue
          FROM transactions WHERE brand_id = $1 AND transaction_date >= date_trunc('month', CURRENT_DATE)`,
         [brandId]
       ),
-      db.query('SELECT COUNT(*) AS c FROM stores WHERE brand_id = $1 AND is_active = true', [brandId]),
-      db.query('SELECT COUNT(*) AS c FROM products WHERE brand_id = $1 AND is_active = true', [brandId])
+      brandQuery(brandId, 'SELECT COUNT(*) AS c FROM stores WHERE brand_id = $1 AND is_active = true', [brandId]),
+      brandQuery(brandId, 'SELECT COUNT(*) AS c FROM products WHERE brand_id = $1 AND is_active = true', [brandId])
     ]);
 
     return c.json({

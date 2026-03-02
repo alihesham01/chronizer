@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Trash2, Store } from 'lucide-react';
+import { Plus, Trash2, Store, KeyRound } from 'lucide-react';
 
 const STORE_CHAINS = [
   'Go Native',
@@ -16,6 +16,9 @@ const STORE_CHAINS = [
   'Mr Local',
 ];
 
+// Chains that have a working portal scraper
+const SCRAPER_SUPPORTED = ['Locally', 'Mr Local'];
+
 interface Branch {
   name: string;
   location: string;
@@ -24,10 +27,15 @@ interface Branch {
   rent: number;
 }
 
+export interface PortalCredentials {
+  portal_email: string;
+  portal_password: string;
+}
+
 interface AddStoreDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (storeName: string, branches: Branch[]) => Promise<void>;
+  onSubmit: (storeName: string, branches: Branch[], portalCreds?: PortalCredentials) => Promise<void>;
 }
 
 const emptyBranch = (): Branch => ({
@@ -44,8 +52,11 @@ export function AddStoreDialog({ open, onOpenChange, onSubmit }: AddStoreDialogP
   const [branches, setBranches] = useState<Branch[]>([emptyBranch()]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [portalEmail, setPortalEmail] = useState('');
+  const [portalPassword, setPortalPassword] = useState('');
 
   const storeName = selectedChain === 'other' ? customChainName : selectedChain;
+  const hasScraperSupport = SCRAPER_SUPPORTED.includes(storeName);
   const isValid = storeName.trim() && branches.length > 0 && branches.every(b => b.name.trim());
 
   const addBranch = () => setBranches([...branches, emptyBranch()]);
@@ -64,11 +75,16 @@ export function AddStoreDialog({ open, onOpenChange, onSubmit }: AddStoreDialogP
     setSubmitting(true);
     setError('');
     try {
-      await onSubmit(storeName, branches);
+      const creds = hasScraperSupport && portalEmail && portalPassword
+        ? { portal_email: portalEmail, portal_password: portalPassword }
+        : undefined;
+      await onSubmit(storeName, branches, creds);
       // Reset form
       setSelectedChain('');
       setCustomChainName('');
       setBranches([emptyBranch()]);
+      setPortalEmail('');
+      setPortalPassword('');
       onOpenChange(false);
     } catch (err: any) {
       setError(err.message || 'Failed to create store');
@@ -83,6 +99,8 @@ export function AddStoreDialog({ open, onOpenChange, onSubmit }: AddStoreDialogP
       setCustomChainName('');
       setBranches([emptyBranch()]);
       setError('');
+      setPortalEmail('');
+      setPortalPassword('');
     }
     onOpenChange(isOpen);
   };
@@ -126,6 +144,40 @@ export function AddStoreDialog({ open, onOpenChange, onSubmit }: AddStoreDialogP
               />
             )}
           </div>
+
+          {/* Portal Credentials (only for supported chains) */}
+          {hasScraperSupport && (
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold flex items-center gap-1.5">
+                <KeyRound className="h-4 w-4" />
+                Portal Credentials
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Enter your {storeName} portal login to auto-sync transactions and inventory.
+                A "General" branch will be created to hold unassigned transactions until you reassign them.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Email / Username</Label>
+                  <Input
+                    type="email"
+                    placeholder="portal@example.com"
+                    value={portalEmail}
+                    onChange={(e) => setPortalEmail(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Password</Label>
+                  <Input
+                    type="password"
+                    placeholder="Portal password"
+                    value={portalPassword}
+                    onChange={(e) => setPortalPassword(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Branches */}
           <div className="space-y-3">

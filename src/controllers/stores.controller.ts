@@ -1,6 +1,6 @@
 import { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { db, withTransaction } from '../config/database.js';
+import { brandQuery, withBrandTransaction } from '../config/database.js';
 import { getBrandId } from '../lib/brand-context.js';
 import { auditLog } from '../lib/audit.js';
 
@@ -22,8 +22,8 @@ export class StoresController {
     else if (status === 'inactive') { where += ` AND is_active = false`; }
 
     const [countRes, dataRes] = await Promise.all([
-      db.query(`SELECT COUNT(*) FROM stores ${where}`, params),
-      db.query(`SELECT * FROM stores ${where} ORDER BY name ASC LIMIT $${pi} OFFSET $${pi+1}`, [...params, limitNum, offset])
+      brandQuery(brandId, `SELECT COUNT(*) FROM stores ${where}`, params),
+      brandQuery(brandId, `SELECT * FROM stores ${where} ORDER BY name ASC LIMIT $${pi} OFFSET $${pi+1}`, [...params, limitNum, offset])
     ]);
 
     const total = parseInt(countRes.rows[0].count);
@@ -37,7 +37,7 @@ export class StoresController {
   static async getStore(c: Context) {
     const brandId = getBrandId(c);
     const { id } = c.req.param();
-    const result = await db.query('SELECT * FROM stores WHERE id = $1 AND brand_id = $2', [id, brandId]);
+    const result = await brandQuery(brandId, 'SELECT * FROM stores WHERE id = $1 AND brand_id = $2', [id, brandId]);
     if (result.rows.length === 0) throw new HTTPException(404, { message: 'Store not found' });
     return c.json({ success: true, data: result.rows[0] });
   }
@@ -50,11 +50,11 @@ export class StoresController {
     if (!name) throw new HTTPException(400, { message: 'Store name is required' });
 
     if (code) {
-      const existing = await db.query('SELECT id FROM stores WHERE brand_id = $1 AND code = $2', [brandId, code]);
+      const existing = await brandQuery(brandId, 'SELECT id FROM stores WHERE brand_id = $1 AND code = $2', [brandId, code]);
       if (existing.rows.length > 0) throw new HTTPException(409, { message: 'Store code already exists' });
     }
 
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `INSERT INTO stores (brand_id, name, display_name, code, group_name, location, commission, rent, activation_date)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
       [brandId, name, display_name || name, code, group_name, location || null, commission, rent, activation_date || new Date().toISOString()]
@@ -68,7 +68,7 @@ export class StoresController {
     const { id } = c.req.param();
     const body = await c.req.json();
 
-    const existing = await db.query('SELECT id FROM stores WHERE id = $1 AND brand_id = $2', [id, brandId]);
+    const existing = await brandQuery(brandId, 'SELECT id FROM stores WHERE id = $1 AND brand_id = $2', [id, brandId]);
     if (existing.rows.length === 0) throw new HTTPException(404, { message: 'Store not found' });
 
     const allowed = ['name','display_name','code','group_name','location','commission','rent','activation_date','deactivation_date','is_active'];
@@ -82,7 +82,7 @@ export class StoresController {
     if (sets.length === 0) throw new HTTPException(400, { message: 'No valid fields to update' });
 
     params.push(id, brandId);
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `UPDATE stores SET ${sets.join(', ')} WHERE id = $${pi} AND brand_id = $${pi+1} RETURNING *`, params
     );
     await auditLog(brandId, c.get('ownerId'), 'store_updated', { id });
@@ -93,7 +93,7 @@ export class StoresController {
     const brandId = getBrandId(c);
     const { id } = c.req.param();
     // Soft delete: deactivate instead of removing
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       'UPDATE stores SET is_active = false, deactivation_date = NOW() WHERE id = $1 AND brand_id = $2 AND is_active = true RETURNING id',
       [id, brandId]
     );
@@ -107,7 +107,7 @@ export class StoresController {
     const { stores } = await c.req.json();
     if (!Array.isArray(stores) || stores.length === 0) throw new HTTPException(400, { message: 'stores array required' });
 
-    return await withTransaction(async (client) => {
+    return await withBrandTransaction(brandId, async (client) => {
       const results: any[] = [];
       const errors: any[] = [];
 

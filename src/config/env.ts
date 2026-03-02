@@ -15,6 +15,11 @@ const envSchema = z.object({
   PORTAL_ENCRYPTION_KEY: z.string().min(1).default('dev-portal-key-change-in-production'),
   REDIS_URL: z.string().default('redis://localhost:6379'),
   SCRAPER_CONCURRENCY: z.string().transform(Number).default('5'),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.string().transform(Number).default('587'),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM: z.string().default('noreply@chronizer.com'),
 });
 
 export type Env = z.infer<typeof envSchema>;

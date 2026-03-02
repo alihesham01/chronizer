@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { db } from '../config/database.js';
+import { db, adminQuery } from '../config/database.js';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import type { Context } from 'hono';
@@ -37,13 +37,13 @@ admin.get('/stats', async (c) => {
     const [brands, owners, transactions, products, stores, stockMoves] = await Promise.all([
       db.query("SELECT COUNT(*) as count FROM brands WHERE is_active = true AND subdomain != 'admin'"),
       db.query("SELECT COUNT(*) as count FROM brand_owners WHERE is_active = true AND is_admin = false"),
-      db.query('SELECT COUNT(*) as count FROM transactions'),
-      db.query('SELECT COUNT(*) as count FROM products WHERE is_active = true'),
-      db.query('SELECT COUNT(*) as count FROM stores WHERE is_active = true'),
-      db.query('SELECT COUNT(*) as count FROM stock_movements'),
+      adminQuery('SELECT COUNT(*) as count FROM transactions'),
+      adminQuery('SELECT COUNT(*) as count FROM products WHERE is_active = true'),
+      adminQuery('SELECT COUNT(*) as count FROM stores WHERE is_active = true'),
+      adminQuery('SELECT COUNT(*) as count FROM stock_movements'),
     ]);
 
-    const recentTxns = await db.query(`
+    const recentTxns = await adminQuery(`
       SELECT DATE(transaction_date) as date, COUNT(*) as count, COALESCE(SUM(total_amount),0) as total
       FROM transactions
       WHERE transaction_date >= NOW() - INTERVAL '30 days'
@@ -51,7 +51,7 @@ admin.get('/stats', async (c) => {
       ORDER BY date DESC
     `);
 
-    const topBrands = await db.query(`
+    const topBrands = await adminQuery(`
       SELECT b.name, b.subdomain, COUNT(t.id) as transaction_count,
              COALESCE(SUM(t.total_amount), 0) as total_revenue
       FROM brands b
@@ -242,7 +242,7 @@ admin.delete('/invite-links/:id', async (c) => {
 // BRAND MANAGEMENT — all brands with detailed stats
 // ═══════════════════════════════════════════════════════════════
 admin.get('/brands', async (c) => {
-  const result = await db.query(`
+  const result = await adminQuery(`
     SELECT b.*,
            (SELECT COUNT(*) FROM brand_owners WHERE brand_id = b.id AND is_active = true) as owner_count,
            (SELECT COUNT(*) FROM transactions WHERE brand_id = b.id) as transaction_count,
@@ -268,8 +268,8 @@ admin.get('/all-transactions', async (c) => {
   const offset = (page - 1) * limit;
 
   const [countResult, dataResult] = await Promise.all([
-    db.query('SELECT COUNT(*) as total FROM transactions'),
-    db.query(`
+    adminQuery('SELECT COUNT(*) as total FROM transactions'),
+    adminQuery(`
       SELECT t.*, b.name as brand_name, b.subdomain,
              s.name as store_name
       FROM transactions t
@@ -294,7 +294,7 @@ admin.get('/all-transactions', async (c) => {
 
 // All products across all brands
 admin.get('/all-products', async (c) => {
-  const result = await db.query(`
+  const result = await adminQuery(`
     SELECT p.*, b.name as brand_name, b.subdomain
     FROM products p
     JOIN brands b ON b.id = p.brand_id
@@ -308,7 +308,7 @@ admin.get('/all-products', async (c) => {
 
 // All stores across all brands
 admin.get('/all-stores', async (c) => {
-  const result = await db.query(`
+  const result = await adminQuery(`
     SELECT s.*, b.name as brand_name, b.subdomain
     FROM stores s
     JOIN brands b ON b.id = s.brand_id
@@ -342,7 +342,7 @@ admin.get('/all-users', async (c) => {
 // Get single brand details
 admin.get('/brands/:brandId', async (c) => {
   const { brandId } = c.req.param();
-  const result = await db.query(
+  const result = await adminQuery(
     `SELECT b.*,
            (SELECT COUNT(*) FROM brand_owners WHERE brand_id = b.id AND is_active = true) as owner_count,
            (SELECT COUNT(*) FROM transactions WHERE brand_id = b.id) as transaction_count,
@@ -360,7 +360,7 @@ admin.get('/brands/:brandId', async (c) => {
 // Get a brand's products
 admin.get('/brands/:brandId/products', async (c) => {
   const { brandId } = c.req.param();
-  const result = await db.query(
+  const result = await adminQuery(
     `SELECT * FROM products WHERE brand_id = $1 ORDER BY created_at DESC LIMIT 500`,
     [brandId]
   );
@@ -370,7 +370,7 @@ admin.get('/brands/:brandId/products', async (c) => {
 // Get a brand's stores
 admin.get('/brands/:brandId/stores', async (c) => {
   const { brandId } = c.req.param();
-  const result = await db.query(
+  const result = await adminQuery(
     `SELECT * FROM stores WHERE brand_id = $1 ORDER BY created_at DESC`,
     [brandId]
   );
@@ -385,8 +385,8 @@ admin.get('/brands/:brandId/transactions', async (c) => {
   const offset = (page - 1) * limit;
 
   const [countResult, dataResult] = await Promise.all([
-    db.query('SELECT COUNT(*) as total FROM transactions WHERE brand_id = $1', [brandId]),
-    db.query(
+    adminQuery('SELECT COUNT(*) as total FROM transactions WHERE brand_id = $1', [brandId]),
+    adminQuery(
       `SELECT t.*, s.name as store_name
        FROM transactions t
        LEFT JOIN stores s ON s.id = t.store_id
@@ -412,7 +412,7 @@ admin.get('/brands/:brandId/transactions', async (c) => {
 admin.get('/brands/:brandId/inventory', async (c) => {
   const { brandId } = c.req.param();
   try {
-    const result = await db.query(
+    const result = await adminQuery(
       `SELECT * FROM inventory_view WHERE brand_id = $1 ORDER BY item_name`,
       [brandId]
     );
@@ -513,25 +513,25 @@ admin.get('/integrity-check', async (c) => {
   const issues: string[] = [];
 
   // 1. Orphaned transactions (brand_id doesn't exist)
-  const orphanTxn = await db.query(
+  const orphanTxn = await adminQuery(
     `SELECT COUNT(*) as c FROM transactions t LEFT JOIN brands b ON b.id = t.brand_id WHERE b.id IS NULL`
   );
   if (parseInt(orphanTxn.rows[0].c) > 0) issues.push(`${orphanTxn.rows[0].c} orphaned transactions (missing brand)`);
 
   // 2. Orphaned products
-  const orphanProd = await db.query(
+  const orphanProd = await adminQuery(
     `SELECT COUNT(*) as c FROM products p LEFT JOIN brands b ON b.id = p.brand_id WHERE b.id IS NULL`
   );
   if (parseInt(orphanProd.rows[0].c) > 0) issues.push(`${orphanProd.rows[0].c} orphaned products (missing brand)`);
 
   // 3. Orphaned stores
-  const orphanStore = await db.query(
+  const orphanStore = await adminQuery(
     `SELECT COUNT(*) as c FROM stores s LEFT JOIN brands b ON b.id = s.brand_id WHERE b.id IS NULL`
   );
   if (parseInt(orphanStore.rows[0].c) > 0) issues.push(`${orphanStore.rows[0].c} orphaned stores (missing brand)`);
 
   // 4. Transactions referencing non-existent stores
-  const badStoreTxn = await db.query(
+  const badStoreTxn = await adminQuery(
     `SELECT COUNT(*) as c FROM transactions t WHERE t.store_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM stores s WHERE s.id = t.store_id)`
   );
   if (parseInt(badStoreTxn.rows[0].c) > 0) issues.push(`${badStoreTxn.rows[0].c} transactions referencing deleted stores`);
@@ -543,7 +543,7 @@ admin.get('/integrity-check', async (c) => {
   if (parseInt(orphanOwners.rows[0].c) > 0) issues.push(`${orphanOwners.rows[0].c} orphaned brand owners (missing brand)`);
 
   // 6. Duplicate SKUs within same brand
-  const dupSkus = await db.query(
+  const dupSkus = await adminQuery(
     `SELECT brand_id, sku, COUNT(*) as c FROM products GROUP BY brand_id, sku HAVING COUNT(*) > 1`
   );
   if (dupSkus.rows.length > 0) issues.push(`${dupSkus.rows.length} duplicate SKU entries across brands`);
@@ -564,6 +564,76 @@ admin.get('/integrity-check', async (c) => {
       checkedAt: new Date().toISOString()
     }
   });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// CROSS-BRAND ANALYTICS — compare performance across all brands
+// ═══════════════════════════════════════════════════════════════
+admin.get('/cross-brand-analytics', async (c) => {
+  try {
+    const { period = '30' } = c.req.query();
+    const days = parseInt(period) || 30;
+
+    // Revenue per brand over period
+    const brandRevenue = await db.query(`
+      SELECT b.name AS brand_name, b.subdomain,
+             COUNT(t.id) AS transaction_count,
+             COALESCE(SUM(t.quantity_sold * t.selling_price), 0) AS total_revenue,
+             COALESCE(AVG(t.selling_price), 0) AS avg_price,
+             COUNT(DISTINCT t.sku) AS unique_products_sold,
+             COUNT(DISTINCT t.store_id) AS active_stores
+      FROM brands b
+      LEFT JOIN transactions t ON t.brand_id = b.id AND t.transaction_date >= NOW() - ($1 || ' days')::interval
+      WHERE b.is_active = true AND b.subdomain != 'admin'
+      GROUP BY b.id, b.name, b.subdomain
+      ORDER BY total_revenue DESC
+    `, [days]);
+
+    // Top categories across all brands
+    const topCategories = await db.query(`
+      SELECT p.category, COUNT(t.id) AS txn_count,
+             SUM(t.quantity_sold) AS total_qty,
+             SUM(t.quantity_sold * t.selling_price) AS revenue
+      FROM transactions t
+      JOIN products p ON p.brand_id = t.brand_id AND p.sku = t.sku
+      WHERE t.transaction_date >= NOW() - ($1 || ' days')::interval AND p.category IS NOT NULL
+      GROUP BY p.category ORDER BY revenue DESC LIMIT 15
+    `, [days]);
+
+    // Daily trend across all brands
+    const dailyTrend = await db.query(`
+      SELECT DATE(transaction_date) AS day,
+             COUNT(*) AS transactions,
+             COALESCE(SUM(quantity_sold * selling_price), 0) AS revenue
+      FROM transactions
+      WHERE transaction_date >= NOW() - ($1 || ' days')::interval
+      GROUP BY DATE(transaction_date) ORDER BY day
+    `, [days]);
+
+    // Scraper health across brands
+    const scraperHealth = await db.query(`
+      SELECT b.name AS brand_name, sj.group_name, sj.status,
+             COUNT(*) AS job_count, MAX(sj.completed_at) AS last_run
+      FROM scrape_jobs sj
+      JOIN brands b ON b.id = sj.brand_id
+      WHERE sj.started_at >= NOW() - INTERVAL '7 days'
+      GROUP BY b.name, sj.group_name, sj.status
+      ORDER BY b.name, sj.group_name
+    `);
+
+    return c.json({
+      success: true,
+      data: {
+        period: `${days}d`,
+        brandRevenue: brandRevenue.rows,
+        topCategories: topCategories.rows,
+        dailyTrend: dailyTrend.rows,
+        scraperHealth: scraperHealth.rows,
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
 });
 
 export { admin as adminRoutes };

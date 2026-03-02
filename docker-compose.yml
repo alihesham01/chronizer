@@ -55,6 +55,11 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       CORS_ORIGIN: http://localhost:3001
       DB_POOL_SIZE: 50
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@chronizer.com}
     ports:
       - "3000:3000"
     depends_on:
@@ -83,6 +88,11 @@ services:
       PORTAL_ENCRYPTION_KEY: ${PORTAL_ENCRYPTION_KEY}
       SCRAPER_CONCURRENCY: 5
       DB_POOL_SIZE: 20
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@chronizer.com}
     depends_on:
       postgres:
         condition: service_healthy

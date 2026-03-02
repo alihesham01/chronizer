@@ -1,7 +1,8 @@
 import { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
-import { db, withTransaction } from '../config/database.js';
+import { randomUUID } from 'crypto';
+import { brandQuery, withBrandTransaction } from '../config/database.js';
 import { getBrandId } from '../lib/brand-context.js';
 import { auditLog } from '../lib/audit.js';
 
@@ -36,8 +37,8 @@ export class TransactionsController {
     if (end_date)   { whereClause += ` AND t.transaction_date <= $${pi}`; params.push(end_date); pi++; }
 
     const [countRes, dataRes] = await Promise.all([
-      db.query(`SELECT COUNT(*) FROM transactions t ${whereClause}`, params),
-      db.query(
+      brandQuery(brandId, `SELECT COUNT(*) FROM transactions t ${whereClause}`, params),
+      brandQuery(brandId,
         `SELECT t.*, s.name AS store_name
          FROM transactions t LEFT JOIN stores s ON t.store_id = s.id
          ${whereClause}
@@ -59,7 +60,7 @@ export class TransactionsController {
     const brandId = getBrandId(c);
     const { id } = c.req.param();
 
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `SELECT t.*, s.name AS store_name FROM transactions t LEFT JOIN stores s ON t.store_id = s.id
        WHERE t.id = $1 AND t.brand_id = $2`, [id, brandId]
     );
@@ -77,14 +78,14 @@ export class TransactionsController {
     const { transaction_date, store_id, sku, quantity_sold, selling_price, status, customer_id, payment_method, notes } = parsed.data;
 
     // Try direct product lookup first, then SKU auto-resolution via sku_store_map
-    let prod = await db.query('SELECT big_sku, name, colour, size FROM products WHERE brand_id = $1 AND sku = $2', [brandId, sku]);
+    let prod = await brandQuery(brandId, 'SELECT big_sku, name, colour, size FROM products WHERE brand_id = $1 AND sku = $2', [brandId, sku]);
     let resolvedSku = sku;
 
     if (prod.rows.length === 0 && store_id) {
       // Attempt SKU auto-resolution: look up the store's group, then resolve via sku_store_map
-      const storeRes = await db.query('SELECT group_name FROM stores WHERE id = $1 AND brand_id = $2', [store_id, brandId]);
+      const storeRes = await brandQuery(brandId, 'SELECT group_name FROM stores WHERE id = $1 AND brand_id = $2', [store_id, brandId]);
       if (storeRes.rows.length > 0 && storeRes.rows[0].group_name) {
-        const mapRes = await db.query(
+        const mapRes = await brandQuery(brandId,
           `SELECT p.sku, p.big_sku, p.name, p.colour, p.size
            FROM sku_store_map m JOIN products p ON p.id = m.product_id
            WHERE m.brand_id = $1 AND m.store_group = $2 AND m.store_sku = $3`,
@@ -100,10 +101,12 @@ export class TransactionsController {
     if (prod.rows.length === 0) throw new HTTPException(400, { message: `SKU '${sku}' not found (also checked sku_store_map)` });
     const p = prod.rows[0];
 
-    const result = await db.query(
-      `INSERT INTO transactions (brand_id, transaction_date, store_id, sku, big_sku, item_name, colour, size, quantity_sold, selling_price, status, customer_id, payment_method, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
-      [brandId, transaction_date, store_id, resolvedSku, p.big_sku, p.name, p.colour, p.size, quantity_sold, selling_price, status, customer_id, payment_method, notes]
+    // Idempotency: if request_id provided, use ON CONFLICT to prevent duplicates
+    const requestId = body.request_id || null;
+    const result = await brandQuery(brandId,
+      `INSERT INTO transactions (brand_id, transaction_date, store_id, sku, big_sku, item_name, colour, size, quantity_sold, selling_price, status, customer_id, payment_method, notes, request_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+      [brandId, transaction_date, store_id, resolvedSku, p.big_sku, p.name, p.colour, p.size, quantity_sold, selling_price, status, customer_id, payment_method, notes, requestId]
     );
 
     await auditLog(brandId, c.get('ownerId'), 'transaction_created', { id: result.rows[0].id, sku: resolvedSku });
@@ -115,7 +118,7 @@ export class TransactionsController {
     const { id } = c.req.param();
     const body = await c.req.json();
 
-    const existing = await db.query('SELECT id FROM transactions WHERE id = $1 AND brand_id = $2', [id, brandId]);
+    const existing = await brandQuery(brandId, 'SELECT id FROM transactions WHERE id = $1 AND brand_id = $2', [id, brandId]);
     if (existing.rows.length === 0) throw new HTTPException(404, { message: 'Transaction not found' });
 
     // If SKU changed, re-populate product data
@@ -125,7 +128,7 @@ export class TransactionsController {
     const sets: string[] = [];
 
     if (body.sku) {
-      const prod = await db.query('SELECT big_sku, name, colour, size FROM products WHERE brand_id = $1 AND sku = $2', [brandId, body.sku]);
+      const prod = await brandQuery(brandId, 'SELECT big_sku, name, colour, size FROM products WHERE brand_id = $1 AND sku = $2', [brandId, body.sku]);
       if (prod.rows.length === 0) throw new HTTPException(400, { message: `SKU '${body.sku}' not found` });
       const p = prod.rows[0];
       body.big_sku = p.big_sku; body.item_name = p.name; body.colour = p.colour; body.size = p.size;
@@ -139,7 +142,7 @@ export class TransactionsController {
     if (sets.length === 0) throw new HTTPException(400, { message: 'No fields to update' });
     params.push(id, brandId);
 
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `UPDATE transactions SET ${sets.join(', ')} WHERE id = $${pi} AND brand_id = $${pi+1} RETURNING *`, params
     );
     await auditLog(brandId, c.get('ownerId'), 'transaction_updated', { id });
@@ -150,7 +153,7 @@ export class TransactionsController {
     const brandId = getBrandId(c);
     const { id } = c.req.param();
     // Soft delete: set status to 'deleted' instead of removing the row
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       "UPDATE transactions SET status = 'deleted' WHERE id = $1 AND brand_id = $2 AND status != 'deleted' RETURNING id",
       [id, brandId]
     );
@@ -171,7 +174,7 @@ export class TransactionsController {
     if (end_date) { where += ` AND t.transaction_date <= $${pi}`; params.push(end_date); pi++; }
     if (store_id) { where += ` AND t.store_id = $${pi}`; params.push(store_id); pi++; }
 
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `SELECT t.transaction_date, t.sku, t.big_sku, t.item_name, t.colour, t.size,
               t.quantity_sold, t.selling_price, t.status, t.payment_method, t.notes,
               s.name AS store_name
@@ -211,7 +214,7 @@ export class TransactionsController {
       throw new HTTPException(400, { message: 'Max 5000 transactions per batch' });
     }
 
-    return await withTransaction(async (client) => {
+    return await withBrandTransaction(brandId, async (client) => {
       // Pre-fetch all product data for this brand in one query
       const skus = [...new Set(transactions.map((t: any) => t.sku).filter(Boolean))];
       const prodResult = await client.query(
@@ -285,7 +288,7 @@ export class TransactionsController {
     }
 
     // Pre-fetch stores for name->id lookup
-    const storesResult = await db.query('SELECT id, name, code FROM stores WHERE brand_id = $1', [brandId]);
+    const storesResult = await brandQuery(brandId, 'SELECT id, name, code FROM stores WHERE brand_id = $1', [brandId]);
     const storeMap = new Map<string, string>();
     for (const s of storesResult.rows) {
       storeMap.set(s.name?.toLowerCase(), s.id);
@@ -340,8 +343,9 @@ export class TransactionsController {
       return c.json({ success: false, error: 'No valid rows parsed', parseErrors });
     }
 
-    // Use bulk create logic
-    return await withTransaction(async (client) => {
+    // Use bulk create logic with import_run_id for idempotency
+    const importRunId = body.import_run_id || randomUUID();
+    return await withBrandTransaction(brandId, async (client) => {
       const skus = [...new Set(transactions.map(t => t.sku))];
       const prodResult = await client.query(
         'SELECT sku, big_sku, name, colour, size FROM products WHERE brand_id = $1 AND sku = ANY($2)',
@@ -364,15 +368,15 @@ export class TransactionsController {
           const p = prodMap.get(txn.sku);
           if (!p) { errors.push({ row: start + i + 2, sku: txn.sku, error: 'SKU not found in products' }); continue; }
 
-          placeholders.push(`($${pi},$${pi+1},$${pi+2},$${pi+3},$${pi+4},$${pi+5},$${pi+6},$${pi+7},$${pi+8},$${pi+9},$${pi+10},$${pi+11},$${pi+12})`);
-          values.push(brandId, txn.transaction_date, txn.store_id || null, txn.sku, p.big_sku, p.name, p.colour, p.size,
-                       txn.quantity_sold, txn.selling_price, txn.status || 'sale', null, null);
-          pi += 13;
+          placeholders.push(`($${pi},$${pi+1},$${pi+2},$${pi+3},$${pi+4},$${pi+5},$${pi+6},$${pi+7},$${pi+8},$${pi+9},$${pi+10},$${pi+11},$${pi+12},$${pi+13},$${pi+14})`);
+          values.push(brandId, txn.transaction_date, txn.store_id || null, txn.sku, (p as any).big_sku, (p as any).name, (p as any).colour, (p as any).size,
+                       txn.quantity_sold, txn.selling_price, txn.status || 'sale', null, null, `${importRunId}:${start + i}`, importRunId);
+          pi += 15;
         }
 
         if (placeholders.length > 0) {
           const res = await client.query(
-            `INSERT INTO transactions (brand_id, transaction_date, store_id, sku, big_sku, item_name, colour, size, quantity_sold, selling_price, status, payment_method, notes)
+            `INSERT INTO transactions (brand_id, transaction_date, store_id, sku, big_sku, item_name, colour, size, quantity_sold, selling_price, status, payment_method, notes, request_id, import_run_id)
              VALUES ${placeholders.join(',')} RETURNING id`, values
           );
           results.push(...res.rows);

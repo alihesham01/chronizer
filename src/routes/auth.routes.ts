@@ -3,9 +3,11 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { db } from '../config/database.js';
 import { getEnv } from '../config/env.js';
 import { loginRateLimit } from '../middleware/rate-limit.js';
+import { sendPasswordResetEmail } from '../services/email-service.js';
 
 const auth = new Hono();
 
@@ -378,6 +380,76 @@ auth.post('/refresh', async (c) => {
   } catch {
     return c.json({ success: false, error: 'Invalid or expired token' }, 401);
   }
+});
+
+// POST /api/auth/forgot-password — request password reset
+auth.post('/forgot-password', async (c) => {
+  const { email } = await c.req.json();
+  if (!email) return c.json({ success: false, error: 'Email is required' }, 400);
+
+  // Always return success to prevent email enumeration
+  const successMsg = { success: true, message: 'If an account with that email exists, a reset link has been sent.' };
+
+  try {
+    const result = await db.query(
+      `SELECT bo.id, b.name AS brand_name FROM brand_owners bo
+       JOIN brands b ON b.id = bo.brand_id
+       WHERE bo.email = $1 AND bo.is_active = true AND b.is_active = true`,
+      [email.toLowerCase()]
+    );
+
+    if (result.rows.length === 0) return c.json(successMsg);
+
+    const owner = result.rows[0];
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    // Invalidate previous tokens
+    await db.query(
+      `UPDATE password_reset_tokens SET used_at = NOW() WHERE owner_id = $1 AND used_at IS NULL`,
+      [owner.id]
+    );
+
+    await db.query(
+      `INSERT INTO password_reset_tokens (owner_id, token, expires_at) VALUES ($1, $2, $3)`,
+      [owner.id, token, expiresAt]
+    );
+
+    await sendPasswordResetEmail(email, token, owner.brand_name);
+  } catch (err: any) {
+    console.error('Forgot password error:', err.message);
+  }
+
+  return c.json(successMsg);
+});
+
+// POST /api/auth/reset-password — reset password with token
+auth.post('/reset-password', async (c) => {
+  const { token, newPassword } = await c.req.json();
+  if (!token || !newPassword) {
+    return c.json({ success: false, error: 'Token and newPassword are required' }, 400);
+  }
+  if (newPassword.length < 8) {
+    return c.json({ success: false, error: 'Password must be at least 8 characters' }, 400);
+  }
+
+  const result = await db.query(
+    `SELECT prt.id, prt.owner_id FROM password_reset_tokens prt
+     WHERE prt.token = $1 AND prt.used_at IS NULL AND prt.expires_at > NOW()`,
+    [token]
+  );
+
+  if (result.rows.length === 0) {
+    return c.json({ success: false, error: 'Invalid or expired reset token' }, 400);
+  }
+
+  const { id: tokenId, owner_id } = result.rows[0];
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+
+  await db.query('UPDATE brand_owners SET password_hash = $1 WHERE id = $2', [passwordHash, owner_id]);
+  await db.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1', [tokenId]);
+
+  return c.json({ success: true, message: 'Password has been reset successfully' });
 });
 
 export { auth as authRoutes };

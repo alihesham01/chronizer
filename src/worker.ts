@@ -13,6 +13,9 @@ import { logger } from './lib/logger.js';
 import { decrypt } from './lib/crypto.js';
 import { getRedis, closeRedis } from './config/redis.js';
 import { analyticsService } from './services/analytics-service.js';
+import { notificationService } from './services/notification-service.js';
+import { alertService } from './services/alert-service.js';
+import { reportService } from './services/report-service.js';
 
 // ═══════════════════════════════════════════════════════════════════
 // BullMQ Queue + Worker — Scraper Jobs
@@ -149,6 +152,12 @@ async function processScrapeJob(job: Job) {
       WHERE id = $1
     `, [scrapeJobId, err.message]);
     logger.error(`[Worker] Failed ${group_name} for brand ${brand_id}:`, err.message);
+
+    // Notify brand owners on permanent failure (last attempt)
+    if (job.attemptsMade + 1 >= (job.opts.attempts || 3)) {
+      await notificationService.scraperFailure(brand_id, group_name, err.message).catch(() => {});
+    }
+
     throw err; // Re-throw so BullMQ triggers retry
   }
 }
@@ -184,8 +193,8 @@ worker.on('failed', (job, err) => {
 // Cron Schedulers
 // ═══════════════════════════════════════════════════════════════════
 
-// Daily at 1:00 AM — enqueue scrape jobs for all active credentials
-cron.schedule('0 1 * * *', async () => {
+// Daily at 2:00 AM Egypt time (Africa/Cairo, UTC+2 = 00:00 UTC)
+cron.schedule('0 2 * * *', async () => {
   logger.info('[Scheduler] Enqueueing daily scrape jobs...');
 
   try {
@@ -229,6 +238,28 @@ cron.schedule('0 * * * *', async () => {
   }
 });
 
+// Every 6 hours — check alert thresholds (low stock, sales anomalies)
+cron.schedule('0 */6 * * *', async () => {
+  logger.info('[Scheduler] Running alert threshold checks...');
+  try {
+    await alertService.checkAllBrands();
+    logger.info('[Scheduler] Alert checks complete');
+  } catch (err: any) {
+    logger.error('[Scheduler] Alert check error:', err.message);
+  }
+});
+
+// Daily at 7 AM — process scheduled reports
+cron.schedule('0 7 * * *', async () => {
+  logger.info('[Scheduler] Processing scheduled reports...');
+  try {
+    await reportService.processScheduledReports();
+    logger.info('[Scheduler] Scheduled reports processed');
+  } catch (err: any) {
+    logger.error('[Scheduler] Report processing error:', err.message);
+  }
+});
+
 // On startup — clean up stuck jobs from previous runs
 async function cleanupStuckJobs() {
   try {
@@ -252,8 +283,10 @@ async function cleanupStuckJobs() {
 logger.info(`[Worker] Starting scraper worker (concurrency: ${concurrency})...`);
 cleanupStuckJobs();
 
-logger.info('[Worker] Daily scrape cron scheduled at 1:00 AM');
+logger.info('[Worker] Daily scrape cron scheduled at 2:00 AM Egypt time');
 logger.info('[Worker] Materialized view refresh scheduled hourly');
+logger.info('[Worker] Alert checks scheduled every 6 hours');
+logger.info('[Worker] Scheduled reports processed daily at 7:00 AM');
 
 // Graceful shutdown
 const shutdown = async () => {

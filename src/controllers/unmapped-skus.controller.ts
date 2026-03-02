@@ -1,6 +1,6 @@
 import { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { db } from '../config/database.js';
+import { brandQuery } from '../config/database.js';
 import { getBrandId } from '../lib/brand-context.js';
 import { auditLog } from '../lib/audit.js';
 
@@ -10,7 +10,7 @@ export class UnmappedSkusController {
     const brandId = getBrandId(c);
     const status = c.req.query('status') || 'pending';
 
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `SELECT u.*, p.name as mapped_product_name, p.sku as mapped_product_sku
        FROM unmapped_skus u
        LEFT JOIN products p ON p.id = u.mapped_to_product_id
@@ -19,7 +19,7 @@ export class UnmappedSkusController {
       [brandId, status]
     );
 
-    const counts = await db.query(
+    const counts = await brandQuery(brandId,
       `SELECT status, COUNT(*) as count FROM unmapped_skus WHERE brand_id = $1 GROUP BY status`,
       [brandId]
     );
@@ -37,7 +37,7 @@ export class UnmappedSkusController {
 
   // Flag an external SKU as unmapped (called during transaction import)
   static async flag(brandId: string, externalSku: string, storeGroup: string | null, source: string, sampleData?: any) {
-    await db.query(
+    await brandQuery(brandId,
       `INSERT INTO unmapped_skus (brand_id, external_sku, store_group, source, sample_data, occurrence_count, first_seen, last_seen)
        VALUES ($1, $2, $3, $4, $5, 1, NOW(), NOW())
        ON CONFLICT (brand_id, external_sku, store_group)
@@ -56,7 +56,7 @@ export class UnmappedSkusController {
     const body = await c.req.json();
     const { productId, action } = body; // action: 'map' | 'ignore'
 
-    const unmapped = await db.query(
+    const unmapped = await brandQuery(brandId,
       'SELECT * FROM unmapped_skus WHERE id = $1 AND brand_id = $2',
       [id, brandId]
     );
@@ -68,11 +68,11 @@ export class UnmappedSkusController {
       if (!productId) throw new HTTPException(400, { message: 'productId required when mapping' });
 
       // Verify product exists
-      const product = await db.query('SELECT id, sku FROM products WHERE id = $1 AND brand_id = $2', [productId, brandId]);
+      const product = await brandQuery(brandId, 'SELECT id, sku FROM products WHERE id = $1 AND brand_id = $2', [productId, brandId]);
       if (product.rows.length === 0) throw new HTTPException(404, { message: 'Product not found' });
 
       // Create the sku_store_map entry
-      await db.query(
+      await brandQuery(brandId,
         `INSERT INTO sku_store_map (brand_id, store_group, store_sku, product_id, notes)
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (brand_id, store_group, store_sku) DO UPDATE SET product_id = $4`,
@@ -80,7 +80,7 @@ export class UnmappedSkusController {
       );
 
       // Mark as mapped
-      await db.query(
+      await brandQuery(brandId,
         `UPDATE unmapped_skus SET status = 'mapped', mapped_to_product_id = $1, resolved_at = NOW(), resolved_by = $2 WHERE id = $3`,
         [productId, c.get('ownerId'), id]
       );
@@ -93,7 +93,7 @@ export class UnmappedSkusController {
 
       return c.json({ success: true, message: 'SKU mapped successfully' });
     } else if (action === 'ignore') {
-      await db.query(
+      await brandQuery(brandId,
         `UPDATE unmapped_skus SET status = 'ignored', resolved_at = NOW(), resolved_by = $1 WHERE id = $2`,
         [c.get('ownerId'), id]
       );
@@ -120,24 +120,24 @@ export class UnmappedSkusController {
     for (const m of mappings) {
       try {
         if (m.action === 'ignore') {
-          await db.query(
+          await brandQuery(brandId,
             `UPDATE unmapped_skus SET status = 'ignored', resolved_at = NOW(), resolved_by = $1 WHERE id = $2 AND brand_id = $3`,
             [c.get('ownerId'), m.unmappedId, brandId]
           );
           ignored++;
         } else if (m.action === 'map' && m.productId) {
-          const unmapped = await db.query('SELECT * FROM unmapped_skus WHERE id = $1 AND brand_id = $2', [m.unmappedId, brandId]);
+          const unmapped = await brandQuery(brandId, 'SELECT * FROM unmapped_skus WHERE id = $1 AND brand_id = $2', [m.unmappedId, brandId]);
           if (unmapped.rows.length === 0) { errors.push({ id: m.unmappedId, error: 'not found' }); continue; }
 
           const sku = unmapped.rows[0];
-          await db.query(
+          await brandQuery(brandId,
             `INSERT INTO sku_store_map (brand_id, store_group, store_sku, product_id, notes)
              VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT (brand_id, store_group, store_sku) DO UPDATE SET product_id = $4`,
             [brandId, sku.store_group || 'default', sku.external_sku, m.productId, 'Bulk mapped from unmapped SKU resolution']
           );
 
-          await db.query(
+          await brandQuery(brandId,
             `UPDATE unmapped_skus SET status = 'mapped', mapped_to_product_id = $1, resolved_at = NOW(), resolved_by = $2 WHERE id = $3`,
             [m.productId, c.get('ownerId'), m.unmappedId]
           );

@@ -29,6 +29,12 @@ import { skuMapRoutes } from './routes/sku-map.routes.js';
 import { unmappedSkusRoutes } from './routes/unmapped-skus.routes.js';
 import { notificationsRoutes } from './routes/notifications.routes.js';
 import { scraperRoutes } from './routes/scrapers.routes.js';
+import { teamRoutes } from './routes/team.routes.js';
+import { webhookRoutes } from './routes/webhook.routes.js';
+import { alertRoutes } from './routes/alert.routes.js';
+import { reportRoutes } from './routes/report.routes.js';
+import { getMetrics, getContentType } from './services/metrics-service.js';
+import { httpRequestDuration, httpRequestTotal } from './services/metrics-service.js';
 // Scheduler moved to worker process (src/worker.ts)
 
 // Middleware
@@ -90,7 +96,7 @@ app.use('/api/*', async (c, next) => {
   const path = c.req.path;
 
   // Public routes — no brand context needed
-  if (path.startsWith('/api/auth') || path === '/api/health' || path === '/api/test') {
+  if (path.startsWith('/api/auth') || path === '/api/health' || path === '/api/test' || path === '/api/team/accept') {
     await next();
     return;
   }
@@ -202,6 +208,17 @@ app.route('/api/sku-map', skuMapRoutes);
 app.route('/api/unmapped-skus', unmappedSkusRoutes);
 app.route('/api/notifications', notificationsRoutes);
 app.route('/api/scrapers', scraperRoutes);
+app.route('/api/team', teamRoutes);
+app.route('/api/webhooks', webhookRoutes);
+app.route('/api/alerts', alertRoutes);
+app.route('/api/reports', reportRoutes);
+
+// ── Prometheus metrics endpoint (no auth — for monitoring tools) ──
+app.get('/metrics', async (c) => {
+  const metrics = await getMetrics();
+  c.header('Content-Type', getContentType());
+  return c.text(metrics);
+});
 
 // ── Cache stats (in-memory) — require authentication ──
 app.get('/api/cache/stats', (c) => {

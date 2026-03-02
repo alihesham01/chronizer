@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { storesApi, Store, StoreFilters } from '@/lib/stores';
-import { AddStoreDialog } from '@/components/add-store-dialog';
+import { AddStoreDialog, PortalCredentials } from '@/components/add-store-dialog';
 
 export default function StoresPage() {
   const router = useRouter();
@@ -53,8 +53,12 @@ export default function StoresPage() {
     }
   };
 
-  const handleAddStoreWithBranches = async (storeName: string, branches: { name: string; location: string; code: string; commission: number; rent: number }[]) => {
-    const storesToCreate = branches.map(branch => ({
+  const handleAddStoreWithBranches = async (
+    storeName: string,
+    branches: { name: string; location: string; code: string; commission: number; rent: number }[],
+    portalCreds?: PortalCredentials
+  ) => {
+    let storesToCreate = branches.map(branch => ({
       name: branch.name,
       display_name: `${storeName} - ${branch.name}`,
       group_name: storeName,
@@ -65,6 +69,24 @@ export default function StoresPage() {
       activation_date: new Date().toISOString(),
     }));
 
+    // If portal credentials are provided, ensure a 'General' branch exists
+    if (portalCreds) {
+      const hasGeneral = branches.some(b => b.name.toLowerCase() === 'general');
+      if (!hasGeneral) {
+        // Add General branch at the beginning
+        storesToCreate.unshift({
+          name: 'General',
+          display_name: `${storeName} - General`,
+          group_name: storeName,
+          code: 'GEN',
+          location: 'Unassigned',
+          commission: 0,
+          rent: 0,
+          activation_date: new Date().toISOString(),
+        });
+      }
+    }
+
     if (storesToCreate.length === 1) {
       const response = await storesApi.createStore(storesToCreate[0] as any);
       setStores([response, ...stores]);
@@ -72,6 +94,19 @@ export default function StoresPage() {
       const response = await storesApi.bulkCreateStores(storesToCreate as any);
       if (response.success) {
         loadStores();
+      }
+    }
+
+    // If portal credentials provided, save them and trigger initial scrape
+    if (portalCreds) {
+      try {
+        await storesApi.savePortalCredentials(storeName, portalCreds.portal_email, portalCreds.portal_password);
+        // Trigger initial scrape in the background (don't await — it can take time)
+        storesApi.triggerInitialScrape(storeName).catch((err: Error) => {
+          console.error('Initial scrape failed (will retry later):', err);
+        });
+      } catch (err) {
+        console.error('Failed to save portal credentials:', err);
       }
     }
   };

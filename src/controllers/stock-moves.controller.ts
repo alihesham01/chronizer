@@ -1,6 +1,6 @@
 import { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { db, withTransaction } from '../config/database.js';
+import { brandQuery, withBrandTransaction } from '../config/database.js';
 import { getBrandId } from '../lib/brand-context.js';
 import { auditLog } from '../lib/audit.js';
 
@@ -22,8 +22,8 @@ export class StockMovesController {
     if (end_date) { where += ` AND sm.move_date <= $${pi}`; params.push(end_date); pi++; }
 
     const [countRes, dataRes] = await Promise.all([
-      db.query(`SELECT COUNT(*) FROM stock_movements sm ${where}`, params),
-      db.query(
+      brandQuery(brandId, `SELECT COUNT(*) FROM stock_movements sm ${where}`, params),
+      brandQuery(brandId,
         `SELECT sm.*, s.name AS store_name
          FROM stock_movements sm LEFT JOIN stores s ON sm.store_id = s.id
          ${where} ORDER BY sm.move_date DESC LIMIT $${pi} OFFSET $${pi+1}`,
@@ -42,7 +42,7 @@ export class StockMovesController {
   static async getStockMove(c: Context) {
     const brandId = getBrandId(c);
     const { id } = c.req.param();
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `SELECT sm.*, s.name AS store_name FROM stock_movements sm LEFT JOIN stores s ON sm.store_id = s.id
        WHERE sm.id = $1 AND sm.brand_id = $2`, [id, brandId]
     );
@@ -59,13 +59,14 @@ export class StockMovesController {
     if (quantity === 0) throw new HTTPException(400, { message: 'Quantity cannot be zero' });
 
     // Verify SKU exists
-    const prod = await db.query('SELECT id FROM products WHERE brand_id = $1 AND sku = $2', [brandId, sku]);
+    const prod = await brandQuery(brandId, 'SELECT id FROM products WHERE brand_id = $1 AND sku = $2', [brandId, sku]);
     if (prod.rows.length === 0) throw new HTTPException(400, { message: `SKU '${sku}' not found` });
 
-    const result = await db.query(
-      `INSERT INTO stock_movements (brand_id, move_date, store_id, sku, quantity, destination, reference_type, reference_number, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [brandId, move_date, store_id, sku, quantity, destination, reference_type, reference_number, notes]
+    const requestId = body.request_id || null;
+    const result = await brandQuery(brandId,
+      `INSERT INTO stock_movements (brand_id, move_date, store_id, sku, quantity, destination, reference_type, reference_number, notes, request_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [brandId, move_date, store_id, sku, quantity, destination, reference_type, reference_number, notes, requestId]
     );
     await auditLog(brandId, c.get('ownerId'), 'stock_move_created', { id: result.rows[0].id, sku });
     return c.json({ success: true, data: result.rows[0] }, 201);
@@ -76,7 +77,7 @@ export class StockMovesController {
     const { id } = c.req.param();
     const body = await c.req.json();
 
-    const existing = await db.query('SELECT id FROM stock_movements WHERE id = $1 AND brand_id = $2', [id, brandId]);
+    const existing = await brandQuery(brandId, 'SELECT id FROM stock_movements WHERE id = $1 AND brand_id = $2', [id, brandId]);
     if (existing.rows.length === 0) throw new HTTPException(404, { message: 'Stock move not found' });
 
     const allowed = ['move_date','store_id','sku','quantity','destination','reference_type','reference_number','notes'];
@@ -90,7 +91,7 @@ export class StockMovesController {
     if (sets.length === 0) throw new HTTPException(400, { message: 'No fields to update' });
 
     params.push(id, brandId);
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `UPDATE stock_movements SET ${sets.join(', ')} WHERE id = $${pi} AND brand_id = $${pi+1} RETURNING *`, params
     );
     await auditLog(brandId, c.get('ownerId'), 'stock_move_updated', { id });
@@ -101,7 +102,7 @@ export class StockMovesController {
     const brandId = getBrandId(c);
     const { id } = c.req.param();
     // Soft delete: mark as cancelled instead of removing
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       "UPDATE stock_movements SET notes = COALESCE(notes, '') || ' [CANCELLED]' WHERE id = $1 AND brand_id = $2 RETURNING id",
       [id, brandId]
     );
@@ -116,7 +117,7 @@ export class StockMovesController {
     if (!Array.isArray(stock_moves) || stock_moves.length === 0) throw new HTTPException(400, { message: 'stock_moves array required' });
     if (stock_moves.length > 5000) throw new HTTPException(400, { message: 'Max 5000 per batch' });
 
-    return await withTransaction(async (client) => {
+    return await withBrandTransaction(brandId, async (client) => {
       const results: any[] = [];
       const errors: any[] = [];
 
@@ -148,7 +149,7 @@ export class StockMovesController {
     const params: any[] = [brandId];
     if (sku) { where += ' AND sku = $2'; params.push(sku); }
 
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `SELECT sku,
               SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END) AS total_in,
               SUM(CASE WHEN quantity < 0 THEN ABS(quantity) ELSE 0 END) AS total_out,

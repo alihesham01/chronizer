@@ -1,6 +1,6 @@
 import { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { db } from '../config/database.js';
+import { brandQuery } from '../config/database.js';
 import { getBrandId } from '../lib/brand-context.js';
 
 export class InventoryController {
@@ -24,8 +24,8 @@ export class InventoryController {
     const sortDir = sort_order === 'desc' ? 'DESC' : 'ASC';
 
     const [countRes, dataRes, summaryRes] = await Promise.all([
-      db.query(`SELECT COUNT(*) FROM inventory_view iv ${whereClause}`, params),
-      db.query(
+      brandQuery(brandId, `SELECT COUNT(*) FROM inventory_view iv ${whereClause}`, params),
+      brandQuery(brandId,
         `SELECT iv.*,
                 iv.available_stock * COALESCE(iv.unit_selling_price, 0) AS inventory_value,
                 CASE WHEN iv.available_stock > 0 THEN 'In Stock' WHEN iv.available_stock = 0 THEN 'Out of Stock' ELSE 'Negative Stock' END AS inventory_status
@@ -34,7 +34,7 @@ export class InventoryController {
          LIMIT $${pi} OFFSET $${pi + 1}`,
         [...params, limitNum, offset]
       ),
-      db.query(
+      brandQuery(brandId,
         `SELECT
            COUNT(*) AS total_items,
            COUNT(CASE WHEN iv.available_stock > 0 THEN 1 END) AS in_stock_count,
@@ -58,7 +58,7 @@ export class InventoryController {
     const brandId = getBrandId(c);
     const { sku } = c.req.param();
 
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `SELECT iv.*,
               iv.available_stock * COALESCE(iv.unit_selling_price, 0) AS inventory_value,
               CASE WHEN iv.available_stock > 0 THEN 'In Stock' WHEN iv.available_stock = 0 THEN 'Out of Stock' ELSE 'Negative Stock' END AS inventory_status
@@ -67,7 +67,7 @@ export class InventoryController {
     );
     if (result.rows.length === 0) throw new HTTPException(404, { message: 'Inventory item not found' });
 
-    const history = await db.query(`
+    const history = await brandQuery(brandId, `
       (SELECT 'stock_move' AS type, move_date AS date, quantity, destination, notes, created_at
        FROM stock_movements WHERE brand_id = $1 AND sku = $2)
       UNION ALL
@@ -83,7 +83,7 @@ export class InventoryController {
   static async getLowStockItems(c: Context) {
     const brandId = getBrandId(c);
     const { threshold = '10' } = c.req.query();
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `SELECT iv.*, iv.available_stock * COALESCE(iv.unit_selling_price, 0) AS inventory_value
        FROM inventory_view iv WHERE iv.brand_id = $1 AND iv.available_stock > 0 AND iv.available_stock <= $2
        ORDER BY iv.available_stock ASC`,
@@ -94,7 +94,7 @@ export class InventoryController {
 
   static async getNegativeStockItems(c: Context) {
     const brandId = getBrandId(c);
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `SELECT iv.*, iv.available_stock * COALESCE(iv.unit_selling_price, 0) AS inventory_value
        FROM inventory_view iv WHERE iv.brand_id = $1 AND iv.available_stock < 0 ORDER BY iv.available_stock ASC`,
       [brandId]
@@ -104,7 +104,7 @@ export class InventoryController {
 
   static async getInventoryValueSummary(c: Context) {
     const brandId = getBrandId(c);
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `SELECT
          COALESCE(SUM(CASE WHEN available_stock > 0 THEN available_stock * COALESCE(unit_selling_price, 0) ELSE 0 END), 0) AS positive_value,
          COALESCE(SUM(CASE WHEN available_stock < 0 THEN available_stock * COALESCE(unit_selling_price, 0) ELSE 0 END), 0) AS negative_value,
@@ -120,7 +120,7 @@ export class InventoryController {
   static async getTopItemsByValue(c: Context) {
     const brandId = getBrandId(c);
     const { limit = '20' } = c.req.query();
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `SELECT iv.*, iv.available_stock * COALESCE(iv.unit_selling_price, 0) AS inventory_value
        FROM inventory_view iv WHERE iv.brand_id = $1 AND iv.available_stock > 0
        ORDER BY iv.available_stock * COALESCE(iv.unit_selling_price, 0) DESC LIMIT $2`,

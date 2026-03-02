@@ -1,6 +1,6 @@
 import { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { db } from '../config/database.js';
+import { brandQuery } from '../config/database.js';
 import { getBrandId } from '../lib/brand-context.js';
 
 export class SkuMapController {
@@ -28,8 +28,8 @@ export class SkuMapController {
     }
 
     const [countRes, dataRes] = await Promise.all([
-      db.query(`SELECT COUNT(*) FROM sku_store_map m JOIN products p ON p.id = m.product_id ${where}`, params),
-      db.query(
+      brandQuery(brandId, `SELECT COUNT(*) FROM sku_store_map m JOIN products p ON p.id = m.product_id ${where}`, params),
+      brandQuery(brandId,
         `SELECT m.*, p.sku AS product_sku, p.name AS product_name, p.size AS product_size, p.colour AS product_colour
          FROM sku_store_map m
          JOIN products p ON p.id = m.product_id
@@ -51,7 +51,7 @@ export class SkuMapController {
   // GET /api/sku-map/groups - Get distinct store groups with mapping counts
   static async getGroups(c: Context) {
     const brandId = getBrandId(c);
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `SELECT m.store_group, COUNT(*) AS mapping_count
        FROM sku_store_map m
        WHERE m.brand_id = $1
@@ -73,11 +73,11 @@ export class SkuMapController {
     }
 
     // Verify product exists and belongs to brand
-    const product = await db.query('SELECT id FROM products WHERE id = $1 AND brand_id = $2', [product_id, brandId]);
+    const product = await brandQuery(brandId, 'SELECT id FROM products WHERE id = $1 AND brand_id = $2', [product_id, brandId]);
     if (product.rows.length === 0) throw new HTTPException(404, { message: 'Product not found' });
 
     // Check for duplicate
-    const existing = await db.query(
+    const existing = await brandQuery(brandId,
       'SELECT id FROM sku_store_map WHERE brand_id = $1 AND store_group = $2 AND store_sku = $3',
       [brandId, store_group, store_sku]
     );
@@ -85,7 +85,7 @@ export class SkuMapController {
       throw new HTTPException(409, { message: `Store SKU "${store_sku}" is already mapped for "${store_group}"` });
     }
 
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `INSERT INTO sku_store_map (brand_id, store_group, store_sku, product_id, notes)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
@@ -116,7 +116,7 @@ export class SkuMapController {
           continue;
         }
 
-        const result = await db.query(
+        const result = await brandQuery(brandId,
           `INSERT INTO sku_store_map (brand_id, store_group, store_sku, product_id, notes)
            VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (brand_id, store_group, store_sku) DO NOTHING
@@ -143,7 +143,7 @@ export class SkuMapController {
     const { id } = c.req.param();
     const body = await c.req.json();
 
-    const existing = await db.query('SELECT id FROM sku_store_map WHERE id = $1 AND brand_id = $2', [id, brandId]);
+    const existing = await brandQuery(brandId, 'SELECT id FROM sku_store_map WHERE id = $1 AND brand_id = $2', [id, brandId]);
     if (existing.rows.length === 0) throw new HTTPException(404, { message: 'Mapping not found' });
 
     const allowed = ['store_group', 'store_sku', 'product_id', 'notes'];
@@ -164,7 +164,7 @@ export class SkuMapController {
     sets.push(`updated_at = NOW()`);
     params.push(id, brandId);
 
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `UPDATE sku_store_map SET ${sets.join(', ')} WHERE id = $${pi} AND brand_id = $${pi + 1} RETURNING *`,
       params
     );
@@ -177,7 +177,7 @@ export class SkuMapController {
     const brandId = getBrandId(c);
     const { id } = c.req.param();
 
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       'DELETE FROM sku_store_map WHERE id = $1 AND brand_id = $2 RETURNING id',
       [id, brandId]
     );
@@ -191,7 +191,7 @@ export class SkuMapController {
     const brandId = getBrandId(c);
     const group = decodeURIComponent(c.req.param('group'));
 
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       'DELETE FROM sku_store_map WHERE brand_id = $1 AND store_group = $2',
       [brandId, group]
     );
@@ -205,7 +205,7 @@ export class SkuMapController {
     const storeGroup = decodeURIComponent(c.req.param('storeGroup'));
     const storeSku = decodeURIComponent(c.req.param('storeSku'));
 
-    const result = await db.query(
+    const result = await brandQuery(brandId,
       `SELECT m.*, p.sku AS product_sku, p.name AS product_name
        FROM sku_store_map m
        JOIN products p ON p.id = m.product_id

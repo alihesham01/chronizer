@@ -19,7 +19,7 @@ import { analyticsService } from './services/analytics-service.js';
 // ═══════════════════════════════════════════════════════════════════
 
 const QUEUE_NAME = 'scraper-jobs';
-const connection = getRedis();
+const connection = getRedis() as any; // BullMQ bundles its own ioredis; cast avoids type mismatch
 
 export const scraperQueue = new Queue(QUEUE_NAME, {
   connection,
